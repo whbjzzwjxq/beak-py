@@ -2,17 +2,9 @@ import io
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
-from circil.ir.node import Circuit
-from openvm_fuzzer.settings import (
-    RUST_GUEST_CORRECT_VALUE,
-)
+from beak_core.types import FuzzingInstSeqInstance
 from zkvm_fuzzer_utils.file import create_file
-from zkvm_fuzzer_utils.project import AbstractCircuitProjectGenerator
-from zkvm_fuzzer_utils.rust.common import (
-    ir_type_to_str,
-    stream_circuit_output_and_compare_routine,
-)
-from zkvm_fuzzer_utils.rust.ir2rust import CircIL2UnsafeRustEmitter
+from zkvm_fuzzer_utils.project import AbstractProjectGenerator
 
 # ---------------------------------------------------------------------------- #
 #                            Openvm stark sdk helper                           #
@@ -57,25 +49,41 @@ def get_openvm_stark_sdk_from_openvm_workspace_cargo_toml(zkvm_path: Path) -> st
 # ---------------------------------------------------------------------------- #
 
 
-class CircuitProjectGenerator(AbstractCircuitProjectGenerator):
+class CircuitProjectGenerator(AbstractProjectGenerator):
     commit_or_branch: str
+    instance: FuzzingInstSeqInstance
 
     def __init__(
         self,
         root: Path,
         zkvm_path: Path,
-        circuits: list[Circuit],
+        instance: FuzzingInstSeqInstance,
         fault_injection: bool,
         trace_collection: bool,
         commit_or_branch: str,
     ):
-        super().__init__(root, zkvm_path, circuits, fault_injection, trace_collection)
+        super().__init__(root, zkvm_path)
+        self.instance = instance
+        self._fault_injection = fault_injection
+        self._trace_collection = trace_collection
         self.commit_or_branch = commit_or_branch
         self.template_env = Environment(
             loader=FileSystemLoader(Path(__file__).parent / "templates"),
             trim_blocks=True,
             lstrip_blocks=True,
         )
+
+    @property
+    def is_fault_injection(self) -> bool:
+        return self._fault_injection
+
+    @property
+    def is_trace_collection(self) -> bool:
+        return self._trace_collection
+
+    @property
+    def requires_fuzzer_utils(self) -> bool:
+        return self.is_fault_injection or self.is_trace_collection
 
     def render_template(self, template_name: str, **kwargs) -> str:
         template = self.template_env.get_template(template_name)
@@ -97,22 +105,20 @@ class CircuitProjectGenerator(AbstractCircuitProjectGenerator):
             "host_cargo.toml.j2",
             requires_fuzzer_utils=self.requires_fuzzer_utils,
             zkvm_path=self.zkvm_path,
-            openvm_stark_sdk_dep=get_openvm_stark_sdk_from_openvm_workspace_cargo_toml(self.zkvm_path),
+            openvm_stark_sdk_dep=get_openvm_stark_sdk_from_openvm_workspace_cargo_toml(
+                self.zkvm_path
+            ),
         )
         create_file(self.root / "host" / "Cargo.toml", content)
 
     def create_host_main_rs(self):
-        inputs = [
-            {"name": e.name, "type_str": ir_type_to_str(e.ty_hint)}
-            for e in self.circuit_candidate.inputs
-        ]
+        # Initial regs info for host to push into stdin
         content = self.render_template(
             "host_main.rs.j2",
             requires_fuzzer_utils=self.requires_fuzzer_utils,
             is_trace_collection=self.is_trace_collection,
             is_fault_injection=self.is_fault_injection,
-            inputs=inputs,
-            circuits=self.circuits,
+            initial_regs=self.instance.initial_regs,
         )
         create_file(self.root / "host" / "src" / "main.rs", content)
 
@@ -121,38 +127,9 @@ class CircuitProjectGenerator(AbstractCircuitProjectGenerator):
         create_file(self.root / "guest" / "Cargo.toml", content)
 
     def create_guest_main_rs(self):
-        circuit_definitions = ""
-        for circuit in self.circuits:
-            circuit_definitions += CircIL2UnsafeRustEmitter().run(circuit) + "\n"
-
-        buffer = io.StringIO()
-
-        def helper_commit_and_exit(value: int, is_end: bool) -> list[str]:
-            if is_end:
-                return [f"reveal_u32({value}_u32, 0);"]
-            else:
-                return [f"reveal_u32({value}_u32, 0);", "return; // abort"]
-
-        stream_circuit_output_and_compare_routine(
-            buffer,
-            self.circuits,
-            RUST_GUEST_CORRECT_VALUE,
-            helper_commit_and_exit,
-        )
-        comparison_routine = buffer.getvalue()
-
-        circuits_info = []
-        for circuit in self.circuits:
-            params = [
-                {"name": p.name, "type_str": ir_type_to_str(p.ty_hint)}
-                for p in circuit.inputs
-            ]
-            circuits_info.append({"name": circuit.name, "inputs": params})
-
         content = self.render_template(
             "guest_main.rs.j2",
-            circuit_definitions=circuit_definitions,
-            circuits=circuits_info,
-            comparison_routine=comparison_routine,
+            instructions=self.instance.instructions,
+            initial_regs=self.instance.initial_regs,
         )
         create_file(self.root / "guest" / "src" / "main.rs", content)

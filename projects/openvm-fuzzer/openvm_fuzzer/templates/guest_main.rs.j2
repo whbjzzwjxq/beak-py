@@ -1,24 +1,39 @@
 #![allow(unused_unsafe)]
 #![allow(unconditional_panic)]
 #![allow(arithmetic_overflow)]
+#![no_main]
 
 use openvm::io::{read, reveal_u32};
+use core::arch::asm;
+
 openvm::entry!(main);
 
-{{ circuit_definitions }}
+#[no_mangle]
+pub fn main() {
+    // 1. Inject initial register states from Host
+    {% for reg_idx in initial_regs.keys() %}
+    let mut x{{ reg_idx }}: u32 = read();
+    {% endfor %}
 
-fn main() {
+    // 2. Execute random instruction sequence
+    unsafe {
+        asm!(
+            // Fuzzing instruction sequence
+            {% for inst in instructions %}
+            "{{ inst }}",
+            {% endfor %}
 
-    //
-    // Parse Inputs and call Circuits
-    //
+            // Explicitly bind to physical registers x1-x15
+            {% for reg_idx in initial_regs.keys() %}
+            inout("x{{ reg_idx }}") x{{ reg_idx }},
+            {% endfor %}
+            
+            options(nostack, nomem)
+        );
+    }
 
-{% for circuit in circuits %}
-    // -- {{ circuit.name }} --
-{% for parameter in circuit.inputs %}
-    let {{ circuit.name }}_{{ parameter.name }}: {{ parameter.type_str }} = read();
-{% endfor %}
-
-{% endfor %}
-    {{ comparison_routine }}
+    // 3. Reveal final results back to Host
+    {% for reg_idx in initial_regs.keys() %}
+    reveal_u32(x{{ reg_idx }}, {{ reg_idx }}); 
+    {% endfor %}
 }

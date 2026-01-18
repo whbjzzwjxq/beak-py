@@ -34,10 +34,6 @@ struct Args {
     #[clap(long)]
     inject_kind: Option<String>,
 {% endif %}
-{% for input in inputs %}
-    #[clap(long)]
-    {{ input.name }}: {{ input.type_str }},
-{% endfor %}
 }
 
 fn main() {
@@ -73,10 +69,6 @@ fn main() {
        .io(Default::default())
        .build();
 
-{% for input in inputs %}
-    let {{ input.name }} = args.{{ input.name }};
-{% endfor %}
-
     let sdk = Sdk::new();
 
     let guest_opts = GuestOptions::default();
@@ -93,13 +85,11 @@ fn main() {
 
     let mut stdin = StdIn::default();
 
-{% for circuit in circuits %}
-    // -- {{ circuit.name }} --
-{% for input in inputs %}
-    stdin.write(&{{ input.name }});
-{% endfor %}
+    // 1. Inject initial register values
+    {% for reg_idx, val in initial_regs.items() %}
+    stdin.write(&{{ val }}u32);
+    {% endfor %}
 
-{% endfor %}
     let app_log_blowup = 2;
     let app_fri_params = FriParameters::standard_with_100_bits_conjectured_security(app_log_blowup);
     let app_config = AppConfig::new(app_fri_params, vm_config);
