@@ -1,5 +1,6 @@
 import io
 from pathlib import Path
+from jinja2 import Environment, FileSystemLoader
 
 from circil.ir.node import Circuit
 from openvm_fuzzer.settings import (
@@ -70,6 +71,15 @@ class CircuitProjectGenerator(AbstractCircuitProjectGenerator):
     ):
         super().__init__(root, zkvm_path, circuits, fault_injection, trace_collection)
         self.commit_or_branch = commit_or_branch
+        self.template_env = Environment(
+            loader=FileSystemLoader(Path(__file__).parent / "templates"),
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+
+    def render_template(self, template_name: str, **kwargs) -> str:
+        template = self.template_env.get_template(template_name)
+        return template.render(**kwargs)
 
     def create(self):
         self.create_root_cargo_toml()
@@ -79,294 +89,43 @@ class CircuitProjectGenerator(AbstractCircuitProjectGenerator):
         self.create_guest_main_rs()
 
     def create_root_cargo_toml(self):
-        create_file(
-            self.root / "Cargo.toml",
-            """[workspace]
-members = [
-    "host",
-    "guest",
-]
-default-members = [ "host" ]
-
-resolver = "2"
-""",
-        )
+        content = self.render_template("root_cargo.toml.j2")
+        create_file(self.root / "Cargo.toml", content)
 
     def create_host_cargo_toml(self):
-        buffer = io.StringIO()
-        buffer.write(
-            """[package]
-name = "openvm-host"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-clap = { version = "4.0", features = ["derive", "env"] }
-"""
+        content = self.render_template(
+            "host_cargo.toml.j2",
+            requires_fuzzer_utils=self.requires_fuzzer_utils,
+            zkvm_path=self.zkvm_path,
+            openvm_stark_sdk_dep=get_openvm_stark_sdk_from_openvm_workspace_cargo_toml(self.zkvm_path),
         )
-
-        if self.requires_fuzzer_utils:
-            buffer.write(f'fuzzer_utils = {{ path = "{self.zkvm_path}/crates/fuzzer_utils" }}\n')
-
-        buffer.write(
-            f"""openvm = {{ path = "{self.zkvm_path}/crates/toolchain/openvm" }}
-openvm-sdk = {{ path = "{self.zkvm_path}/crates/sdk" }}
-openvm-build = {{ path = "{self.zkvm_path}/crates/toolchain/build" }}
-openvm-platform = {{ path = "{self.zkvm_path}/crates/toolchain/platform" }}
-openvm-transpiler = {{ path = "{self.zkvm_path}/crates/toolchain/transpiler" }}
-
-{get_openvm_stark_sdk_from_openvm_workspace_cargo_toml(self.zkvm_path)}
-"""
-        )
-
-        create_file(
-            self.root / "host" / "Cargo.toml",
-            buffer.getvalue(),
-        )
+        create_file(self.root / "host" / "Cargo.toml", content)
 
     def create_host_main_rs(self):
-        buffer = io.StringIO()
-
-        if self.requires_fuzzer_utils:
-            buffer.write("use fuzzer_utils;\n")
-
-        buffer.write(
-            """use std::sync::Arc;
-
-use openvm_build::GuestOptions;
-use openvm_sdk::{
-    config::{AppConfig, SdkVmConfig},
-    Sdk, StdIn,
-};
-use openvm_stark_sdk::config::FriParameters;
-
-use clap::Parser;
-use std::time::Instant;
-
-#[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
-struct Args {
-        """
+        inputs = [
+            {"name": e.name, "type_str": ir_type_to_str(e.ty_hint)}
+            for e in self.circuit_candidate.inputs
+        ]
+        content = self.render_template(
+            "host_main.rs.j2",
+            requires_fuzzer_utils=self.requires_fuzzer_utils,
+            is_trace_collection=self.is_trace_collection,
+            is_fault_injection=self.is_fault_injection,
+            inputs=inputs,
+            circuits=self.circuits,
         )
-
-        if self.is_trace_collection:
-            buffer.write("    #[clap(long)]\n")
-            buffer.write("    trace: bool,\n")
-            buffer.write("\n")
-
-        if self.is_fault_injection:
-            buffer.write('    #[arg(long, requires_all=["inject_step", "inject_kind", "seed"])]\n')
-            buffer.write("    #[clap(long)]\n")
-            buffer.write("    inject: bool,\n\n")
-
-            buffer.write("    #[clap(long)]\n")
-            buffer.write("    seed: Option<u64>,\n\n")
-
-            buffer.write("    #[clap(long)]\n")
-            buffer.write("    inject_step: Option<u64>,\n\n")
-
-            buffer.write("    #[clap(long)]\n")
-            buffer.write("    inject_kind: Option<String>,\n\n")
-
-        for e in self.circuit_candidate.inputs:
-            buffer.write("\n")
-            buffer.write("    #[clap(long)]\n")
-            buffer.write(f"    {e.name}: {ir_type_to_str(e.ty_hint)},\n")
-
-        buffer.write(
-            """}
-
-fn main() {
-    let args = Args::parse();
-"""
-        )
-
-        if self.is_trace_collection:
-            buffer.write("    fuzzer_utils::set_trace_logging(args.trace);\n")
-
-        if self.is_fault_injection:
-            buffer.write("    fuzzer_utils::set_injection(args.inject);\n")
-            buffer.write("    if args.inject {\n")
-            buffer.write("        fuzzer_utils::set_seed(args.seed.unwrap());\n")
-            buffer.write("        fuzzer_utils::set_injection_step(args.inject_step.unwrap());\n")
-            buffer.write("        fuzzer_utils::set_injection_kind(args.inject_kind.unwrap());\n")
-            buffer.write("        fuzzer_utils::disable_assertions();\n")
-            buffer.write("    } else {\n")
-            buffer.write("        fuzzer_utils::enable_assertions();\n")
-            buffer.write("    }\n")
-
-        buffer.write(
-            """
-    println!(
-        "<record>{{\\
-            \\"context\\":\\"Setup\\", \\
-            \\"status\\":\\"start\\"\\
-        }}</record>"
-    );
-    let timer = Instant::now();
-
-    // SDK VM Config
-    let vm_config = SdkVmConfig::builder()
-       .system(Default::default())
-       .rv32i(Default::default())
-       .rv32m(Default::default())
-       .io(Default::default())
-       .build();
-"""
-        )
-
-        for e in self.circuit_candidate.inputs:
-            buffer.write(f"    let {e.name} = args.{e.name};\n")
-
-        buffer.write(
-            """
-    let sdk = Sdk::new();
-
-    let guest_opts = GuestOptions::default();
-    let target_path = "guest";
-    let elf = sdk.build(
-        guest_opts,
-        &vm_config,
-        target_path,
-        &Default::default(),
-        None // If None, "openvm-init.rs" is used
-    ).expect("guest build");
-
-    let exe = sdk.transpile(elf, vm_config.transpiler()).expect("guest transpile");
-
-    let mut stdin = StdIn::default();
-"""
-        )
-
-        for circuit in self.circuits:
-            buffer.write(f"    // -- {circuit.name} --\n")
-            for e in self.circuit_candidate.inputs:
-                buffer.write(f"    stdin.write(&{e.name});\n")
-            buffer.write("\n")
-
-        buffer.write(
-            """
-    let app_log_blowup = 2;
-    let app_fri_params = FriParameters::standard_with_100_bits_conjectured_security(app_log_blowup);
-    let app_config = AppConfig::new(app_fri_params, vm_config);
-
-    let app_committed_exe = sdk.commit_app_exe(app_fri_params, exe).expect("commit app exe");
-
-    let app_pk = Arc::new(sdk.app_keygen(app_config).expect("app keygen"));
-
-    println!(
-        "<record>{{\\
-            \\"context\\":\\"Setup\\", \\
-            \\"status\\":\\"success\\", \\
-            \\"time\\":\\"{:.2?}\\"\\
-        }}</record>",
-        timer.elapsed()
-    );
-
-    println!(
-        "<record>{{\\
-            \\"context\\":\\"Prover\\", \\
-            \\"status\\":\\"start\\"\\
-        }}</record>"
-    );
-    let timer = Instant::now();
-
-    let proof = sdk.generate_app_proof(
-        app_pk.clone(),
-        app_committed_exe.clone(),
-        stdin.clone()
-    ).expect("prove");
-
-    println!(
-        "<record>{{\\
-            \\"context\\":\\"Prover\\", \\
-            \\"status\\":\\"success\\",\\
-            \\"output\\":\\"{:?}\\", \\
-            \\"time\\":\\"{:.2?}\\"\\
-        }}</record>",
-        proof.user_public_values.public_values,
-        timer.elapsed()
-    );
-
-"""
-        )
-
-        if self.is_fault_injection:
-            buffer.write("    if args.inject { fuzzer_utils::enable_assertions(); }\n")
-
-        buffer.write(
-            """
-
-    println!(
-        "<record>{{\\
-            \\"context\\":\\"Verifier\\", \\
-            \\"status\\":\\"start\\"\\
-        }}</record>"
-    );
-    let timer = Instant::now();
-
-    let app_vk = app_pk.get_app_vk();
-    sdk.verify_app_proof(&app_vk, &proof).expect("verify");
-
-    println!(
-        "<record>{{\\
-            \\"context\\":\\"Verifier\\", \\
-            \\"status\\":\\"success\\", \\
-            \\"time\\":\\"{:.2?}\\"\\
-        }}</record>",
-        timer.elapsed()
-    );
-}"""
-        )
-
-        create_file(self.root / "host" / "src" / "main.rs", buffer.getvalue())
+        create_file(self.root / "host" / "src" / "main.rs", content)
 
     def create_guest_cargo_toml(self):
-        create_file(
-            self.root / "guest" / "Cargo.toml",
-            f"""[package]
-name = "openvm-guest"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-openvm = {{ path = "{self.zkvm_path}/crates/toolchain/openvm", features = ["std"] }}
-""",
-        )
+        content = self.render_template("guest_cargo.toml.j2", zkvm_path=self.zkvm_path)
+        create_file(self.root / "guest" / "Cargo.toml", content)
 
     def create_guest_main_rs(self):
+        circuit_definitions = ""
+        for circuit in self.circuits:
+            circuit_definitions += CircIL2UnsafeRustEmitter().run(circuit) + "\n"
+
         buffer = io.StringIO()
-
-        buffer.write("#![allow(unused_unsafe)]\n")
-        buffer.write("#![allow(unconditional_panic)]\n")
-        buffer.write("#![allow(arithmetic_overflow)]\n\n")
-
-        buffer.write("use openvm::io::{read, reveal_u32};\n")
-        buffer.write("openvm::entry!(main);\n\n")
-
-        for circuit in self.circuits:
-            buffer.write(CircIL2UnsafeRustEmitter().run(circuit))
-            buffer.write("\n")
-
-        buffer.write(
-            """
-fn main() {
-"""
-        )
-
-        buffer.write("\n")
-        buffer.write("    //\n")
-        buffer.write("    // Parse Inputs and call Circuits\n")
-        buffer.write("    //\n\n")
-
-        # parse input variables
-        for circuit in self.circuits:
-            buffer.write(f"    // -- {circuit.name} --\n")
-            for parameter in circuit.inputs:
-                var_name = f"{circuit.name}_{parameter.name}"
-                var_type = ir_type_to_str(parameter.ty_hint)
-                buffer.write(f"    let {var_name}: {var_type} = read();\n")
-            buffer.write("\n")
 
         def helper_commit_and_exit(value: int, is_end: bool) -> list[str]:
             if is_end:
@@ -380,7 +139,20 @@ fn main() {
             RUST_GUEST_CORRECT_VALUE,
             helper_commit_and_exit,
         )
+        comparison_routine = buffer.getvalue()
 
-        buffer.write("}\n")
+        circuits_info = []
+        for circuit in self.circuits:
+            params = [
+                {"name": p.name, "type_str": ir_type_to_str(p.ty_hint)}
+                for p in circuit.inputs
+            ]
+            circuits_info.append({"name": circuit.name, "inputs": params})
 
-        create_file(self.root / "guest" / "src" / "main.rs", buffer.getvalue())
+        content = self.render_template(
+            "guest_main.rs.j2",
+            circuit_definitions=circuit_definitions,
+            circuits=circuits_info,
+            comparison_routine=comparison_routine,
+        )
+        create_file(self.root / "guest" / "src" / "main.rs", content)

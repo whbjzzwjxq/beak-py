@@ -1,3 +1,25 @@
+[project]
+name = "beak-monorepo"
+version = "0.1.0"
+description = "A monorepo for zkVM fuzzing"
+requires-python = ">=3.10"
+dependencies = [
+    "jinja2>=3.1.6",
+    "circil",
+    "zkvm-fuzzer-utils",
+    "openvm-fuzzer",
+    "beak-core",
+]
+
+[tool.uv]
+workspace = { members = ["libs/*", "projects/*"] }
+
+[tool.uv.sources]
+circil = { workspace = true }
+zkvm-fuzzer-utils = { workspace = true }
+openvm-fuzzer = { workspace = true }
+beak-core = { workspace = true }
+
 [tool.black]
 line-length = 100
 target-version = ['py310']

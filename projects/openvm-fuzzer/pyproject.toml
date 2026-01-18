@@ -12,7 +12,8 @@ authors = []
 readme = "README.md"
 dependencies = [
   "circil",
-  "zkvm-fuzzer-utils"
+  "zkvm-fuzzer-utils",
+  "jinja2"
 ]
 
 [project.scripts]

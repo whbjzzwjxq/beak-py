@@ -5,85 +5,58 @@
 ROOT=$(shell pwd)
 VIRTUALENV=$(ROOT)/.venv
 PYTHON=$(VIRTUALENV)/bin/python3
-BLACK=$(VIRTUALENV)/bin/black
-FLAKE8=$(VIRTUALENV)/bin/flake8
-ISORT=$(VIRTUALENV)/bin/isort
-PYRIGHT=$(VIRTUALENV)/bin/pyright
-PYTEST=$(VIRTUALENV)/bin/pytest
+# We use 'uv run' for these tools to ensure the environment is correct
+BLACK=uv run black
+FLAKE8=uv run flake8
+ISORT=uv run isort
+PYRIGHT=uv run pyright
+PYTEST=uv run pytest
 PYRIGHTCONFIG=$(ROOT)/pyrightconfig.json
 
 # ---------------------------------------------------------------------------- #
 #                                Command Section                               #
 # ---------------------------------------------------------------------------- #
 
-.PHONY: check clean format install ship test venv
+.PHONY: check clean format install ship test venv install-openvm
 
 $(VIRTUALENV):
-	python3 -m venv $(VIRTUALENV)
+	uv venv
 
-$(PYTHON):
-	python3 -m venv $(VIRTUALENV)
+venv: $(VIRTUALENV)
 
-$(BLACK): $(PYTHON)
-	make install-dev
+clean:
+	rm -rf $(VIRTUALENV) $(PYRIGHTCONFIG) uv.lock
 
-$(FLAKE8): $(PYTHON)
-	make install-dev
+install: $(VIRTUALENV)
+	uv sync
 
-$(ISORT): $(PYTHON)
-	make install-dev
-
-$(PYRIGHT): $(PYTHON)
-	make install-dev
-
-$(PYTEST): $(PYTHON)
-	make install-dev
+install-openvm: $(VIRTUALENV)
+	uv sync --package openvm-fuzzer
+	uv run openvm-fuzzer install ./openvm-src --zkvm-modification --commit-or-branch ca36de3803213da664b03d111801ab903d55e360
 
 $(PYRIGHTCONFIG):
 	@echo "Generating $(PYRIGHTCONFIG) for pyright ..."
 	echo '{'                                  >  $(PYRIGHTCONFIG)
 	echo '    "extraPaths" : ['               >> $(PYRIGHTCONFIG)
 	echo '        "./libs/circil",'           >> $(PYRIGHTCONFIG)
-	echo '        "./libs/zkvm-fuzzer-utils"' >> $(PYRIGHTCONFIG)
+	echo '        "./libs/zkvm-fuzzer-utils",' >> $(PYRIGHTCONFIG)
+	echo '        "./libs/beak-core"'         >> $(PYRIGHTCONFIG)
 	echo '    ]'                              >> $(PYRIGHTCONFIG)
 	echo '}'                                  >> $(PYRIGHTCONFIG)
 
-venv: $(VIRTUALENV)
-
-clean:
-	rm -rf $(VIRTUALENV) $(PYRIGHTCONFIG)
-
-install-dev: $(PYTHON) $(PYRIGHTCONFIG)
-	$(PYTHON) -m pip install -r pip-requirements.txt
-	$(PYTHON) -m pip install -r dev-requirements.txt
-
-install-fuzzer-dependencies: $(PYTHON)
-	cd libs/zkvm-fuzzer-utils && $(PYTHON) -m pip install -r requirements.txt
-	cd projects/nexus-fuzzer && $(PYTHON) -m pip install -r requirements.txt
-	cd projects/jolt-fuzzer && $(PYTHON) -m pip install -r requirements.txt
-	cd projects/risc0-fuzzer && $(PYTHON) -m pip install -r requirements.txt
-	cd projects/sp1-fuzzer && $(PYTHON) -m pip install -r requirements.txt
-	cd projects/openvm-fuzzer && $(PYTHON) -m pip install -r requirements.txt
-	cd projects/pico-fuzzer && $(PYTHON) -m pip install -r requirements.txt
-
-install-plotting-helpers: $(PYTHON)
-	cd scripts && $(PYTHON) -m pip install -r requirements.txt
-
-install: install-dev install-fuzzer-dependencies install-plotting-helpers
-
 ship: format check test
 
-check: $(BLACK) $(FLAKE8) $(ISORT) $(PYRIGHT) $(PYRIGHTCONFIG)
+check: $(PYRIGHTCONFIG)
 	$(BLACK) --check .
 	$(FLAKE8) .
 	$(ISORT) --check-only .
 	$(PYRIGHT) .
 
-format: $(BLACK) $(ISORT)
+format:
 	$(BLACK) .
 	$(ISORT) .
 
-test: $(PYTEST)
+test:
 	FUZZER_TEST=1 $(PYTEST) -v
 
 kill-all-fuzzer:

@@ -1,0 +1,168 @@
+{% if requires_fuzzer_utils %}
+use fuzzer_utils;
+{% endif %}
+use std::sync::Arc;
+
+use openvm_build::GuestOptions;
+use openvm_sdk::{
+    config::{AppConfig, SdkVmConfig},
+    Sdk, StdIn,
+};
+use openvm_stark_sdk::config::FriParameters;
+
+use clap::Parser;
+use std::time::Instant;
+
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+{% if is_trace_collection %}
+    #[clap(long)]
+    trace: bool,
+{% endif %}
+{% if is_fault_injection %}
+    #[arg(long, requires_all=["inject_step", "inject_kind", "seed"])]
+    #[clap(long)]
+    inject: bool,
+
+    #[clap(long)]
+    seed: Option<u64>,
+
+    #[clap(long)]
+    inject_step: Option<u64>,
+
+    #[clap(long)]
+    inject_kind: Option<String>,
+{% endif %}
+{% for input in inputs %}
+    #[clap(long)]
+    {{ input.name }}: {{ input.type_str }},
+{% endfor %}
+}
+
+fn main() {
+    let args = Args::parse();
+{% if is_trace_collection %}
+    fuzzer_utils::set_trace_logging(args.trace);
+{% endif %}
+{% if is_fault_injection %}
+    fuzzer_utils::set_injection(args.inject);
+    if args.inject {
+        fuzzer_utils::set_seed(args.seed.unwrap());
+        fuzzer_utils::set_injection_step(args.inject_step.unwrap());
+        fuzzer_utils::set_injection_kind(args.inject_kind.unwrap());
+        fuzzer_utils::disable_assertions();
+    } else {
+        fuzzer_utils::enable_assertions();
+    }
+{% endif %}
+
+    println!(
+        "<record>{{ '{{' }}\
+            \"context\":\"Setup\", \
+            \"status\":\"start\"\
+        }}</record>"
+    );
+    let timer = Instant::now();
+
+    // SDK VM Config
+    let vm_config = SdkVmConfig::builder()
+       .system(Default::default())
+       .rv32i(Default::default())
+       .rv32m(Default::default())
+       .io(Default::default())
+       .build();
+
+{% for input in inputs %}
+    let {{ input.name }} = args.{{ input.name }};
+{% endfor %}
+
+    let sdk = Sdk::new();
+
+    let guest_opts = GuestOptions::default();
+    let target_path = "guest";
+    let elf = sdk.build(
+        guest_opts,
+        &vm_config,
+        target_path,
+        &Default::default(),
+        None // If None, "openvm-init.rs" is used
+    ).expect("guest build");
+
+    let exe = sdk.transpile(elf, vm_config.transpiler()).expect("guest transpile");
+
+    let mut stdin = StdIn::default();
+
+{% for circuit in circuits %}
+    // -- {{ circuit.name }} --
+{% for input in inputs %}
+    stdin.write(&{{ input.name }});
+{% endfor %}
+
+{% endfor %}
+    let app_log_blowup = 2;
+    let app_fri_params = FriParameters::standard_with_100_bits_conjectured_security(app_log_blowup);
+    let app_config = AppConfig::new(app_fri_params, vm_config);
+
+    let app_committed_exe = sdk.commit_app_exe(app_fri_params, exe).expect("commit app exe");
+
+    let app_pk = Arc::new(sdk.app_keygen(app_config).expect("app keygen"));
+
+    println!(
+        "<record>{{ '{{' }}\
+            \"context\":\"Setup\", \
+            \"status\":\"success\", \
+            \"time\":\"{:.2?}\"\
+        }}</record>",
+        timer.elapsed()
+    );
+
+    println!(
+        "<record>{{ '{{' }}\
+            \"context\":\"Prover\", \
+            \"status\":\"start\"\
+        }}</record>"
+    );
+    let timer = Instant::now();
+
+    let proof = sdk.generate_app_proof(
+        app_pk.clone(),
+        app_committed_exe.clone(),
+        stdin.clone()
+    ).expect("prove");
+
+    println!(
+        "<record>{{ '{{' }}\
+            \"context\":\"Prover\", \
+            \"status\":\"success\",\
+            \"output\":\"{:?}\", \
+            \"time\":\"{:.2?}\"\
+        }}</record>",
+        proof.user_public_values.public_values,
+        timer.elapsed()
+    );
+
+{% if is_fault_injection %}
+    if args.inject { fuzzer_utils::enable_assertions(); }
+{% endif %}
+
+    println!(
+        "<record>{{ '{{' }}\
+            \"context\":\"Verifier\", \
+            \"status\":\"start\"\
+        }}</record>"
+    );
+    let timer = Instant::now();
+
+    let app_vk = app_pk.get_app_vk();
+    sdk.verify_app_proof(&app_vk, &proof).expect("verify");
+
+    println!(
+        "<record>{{ '{{' }}\
+            \"context\":\"Verifier\", \
+            \"status\":\"success\", \
+            \"time\":\"{:.2?}\"\
+        }}</record>",
+        timer.elapsed()
+    );
+}

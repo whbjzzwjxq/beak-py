@@ -1,0 +1,24 @@
+#![allow(unused_unsafe)]
+#![allow(unconditional_panic)]
+#![allow(arithmetic_overflow)]
+
+use openvm::io::{read, reveal_u32};
+openvm::entry!(main);
+
+{{ circuit_definitions }}
+
+fn main() {
+
+    //
+    // Parse Inputs and call Circuits
+    //
+
+{% for circuit in circuits %}
+    // -- {{ circuit.name }} --
+{% for parameter in circuit.inputs %}
+    let {{ circuit.name }}_{{ parameter.name }}: {{ parameter.type_str }} = read();
+{% endfor %}
+
+{% endfor %}
+    {{ comparison_routine }}
+}
