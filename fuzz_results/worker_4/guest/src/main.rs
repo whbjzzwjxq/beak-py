@@ -11,9 +11,11 @@ openvm::entry!(main);
 #[no_mangle]
 pub fn main() {
     // 1. Inject initial register states from Host (excluding x0)
-    {% for reg_idx in initial_regs.keys() if reg_idx != 0 %}
-    let mut x{{ reg_idx }}: u32 = read();
-    {% endfor %}
+    let mut x7: u32 = read();
+    let mut x12: u32 = read();
+    let mut x13: u32 = read();
+    let mut x22: u32 = read();
+    let mut x27: u32 = read();
 
     // Variable to capture final x0 value (to check if it's still 0)
     let mut final_x0: u32 = 0;
@@ -22,17 +24,19 @@ pub fn main() {
     unsafe {
         asm!(
             // Fuzzing instruction sequence
-            {% for inst in instructions %}
-            "{{ inst }}",
-            {% endfor %}
+            "div x13, x7, x22",
+            "sltiu x12, x27, 1807",
+            "lui x22, 299409",
 
             // Manually capture x0 into a temporary register that's mapped to final_x0
             "mv {final_x0}, x0",
 
             // Bind to physical registers (excluding x0 from operands)
-            {% for reg_idx in initial_regs.keys() if reg_idx != 0 %}
-            inout("x{{ reg_idx }}") x{{ reg_idx }},
-            {% endfor %}
+            inout("x7") x7,
+            inout("x12") x12,
+            inout("x13") x13,
+            inout("x22") x22,
+            inout("x27") x27,
             
             final_x0 = out(reg) final_x0,
             
@@ -41,12 +45,14 @@ pub fn main() {
     }
 
     // 3. Reveal final results back to Host using stream 0
-    {% for reg_idx in initial_regs.keys() %}
-    reveal_u32({{ reg_idx }}, 0); 
-    {% if reg_idx == 0 %}
-    reveal_u32(final_x0, 0);
-    {% else %}
-    reveal_u32(x{{ reg_idx }}, 0); 
-    {% endif %}
-    {% endfor %}
+    reveal_u32(7, 0); 
+    reveal_u32(x7, 0); 
+    reveal_u32(12, 0); 
+    reveal_u32(x12, 0); 
+    reveal_u32(13, 0); 
+    reveal_u32(x13, 0); 
+    reveal_u32(22, 0); 
+    reveal_u32(x22, 0); 
+    reveal_u32(27, 0); 
+    reveal_u32(x27, 0); 
 }

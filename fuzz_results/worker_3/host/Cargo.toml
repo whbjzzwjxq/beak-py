@@ -1,0 +1,14 @@
+[package]
+name = "openvm-host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.0", features = ["derive", "env"] }
+openvm = { path = "/app/openvm-src/crates/toolchain/openvm" }
+openvm-sdk = { path = "/app/openvm-src/crates/sdk" }
+openvm-build = { path = "/app/openvm-src/crates/toolchain/build" }
+openvm-platform = { path = "/app/openvm-src/crates/toolchain/platform" }
+openvm-transpiler = { path = "/app/openvm-src/crates/toolchain/transpiler" }
+
+openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", tag = "v1.1.1", default-features = false }

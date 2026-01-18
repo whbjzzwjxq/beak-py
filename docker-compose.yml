@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  worker:
+    image: openvm-fuzzer
+    build:
+      context: .
+      dockerfile: projects/openvm-fuzzer/Dockerfile
+    volumes:
+      - ./openvm-src:/app/openvm-src
+    # Use entrypoint to generate a random seed per container
+    entrypoint: ["/bin/bash", "-c", "uv run openvm-fuzzer run --seed $$RANDOM --zkvm /app/openvm-src --out /app/output"]
+    deploy:
+      replicas: 4 # Number of parallel instances

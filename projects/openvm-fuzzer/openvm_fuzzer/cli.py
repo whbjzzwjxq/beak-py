@@ -17,8 +17,12 @@ class OpenVMFuzzerClient(FuzzerClient):
         assert self.out_dir, "no output directory"
         assert self.zkvm_dir, "no zkvm library"
 
-        logger.info(f"=== Start {self.logger_prefix} Fuzzing Campaign ===")
-        # ... logs ...
+        logger.info(f"=== Start {self.logger_prefix} Fuzzing Loop ===")
+        logger.info(f" * seed: {self.seed}")
+        logger.info(f" * output: {self.out_dir}")
+        logger.info(f" * library: {self.zkvm_dir}")
+        logger.info(f" * commit: {self.commit_or_branch}")
+        logger.info("===")
 
         fuzzer = BeakFuzzer(
             self.out_dir,
@@ -26,6 +30,14 @@ class OpenVMFuzzerClient(FuzzerClient):
             Random(self.seed),
             self.commit_or_branch,
         )
+
+        if self.timeout is not None and self.timeout > 0:
+            fuzzer.enable_timeout(self.timeout)
+
+        # This will run the 'run()' method in a while loop until timeout
+        fuzzer.loop()
+
+        logger.info(f"=== End {self.logger_prefix} Fuzzing Loop ===")
 
         if self.is_fault_injection:
             fuzzer.enable_fault_injection()

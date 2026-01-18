@@ -13,6 +13,7 @@ readme = "README.md"
 dependencies = [
   "circil",
   "zkvm-fuzzer-utils",
+  "beak-core",
   "jinja2"
 ]
 

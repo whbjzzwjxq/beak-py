@@ -20,17 +20,16 @@ def openvm_fault_injection(openvm_install_path: Path, commit_or_branch: str):
     # create a fuzzer_utils crate at zkvm root
     create_fuzzer_utils_crate(openvm_install_path)
 
-    fuzzer_utils_crate_path = openvm_install_path / "crates" / "fuzzer_utils"
-
-    # add fuzzer utils to root Cargo.toml
+    # add fuzzer utils to root Cargo.toml using RELATIVE paths
+    # This allows the project to be built both on host and inside Docker
     replace_in_file(
         openvm_install_path / "Cargo.toml",
         [
-            (r"members = \[", f'members = [\n    "{fuzzer_utils_crate_path}",'),
+            (r"members = \[", f'members = [\n    "crates/fuzzer_utils",'),
             (
                 r"\[workspace\.dependencies\]",
                 f"""[workspace.dependencies]
-    fuzzer_utils = {{ path = "{fuzzer_utils_crate_path}" }}""",
+    fuzzer_utils = {{ path = "crates/fuzzer_utils" }}""",
             ),
         ],
     )

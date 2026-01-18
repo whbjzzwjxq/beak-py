@@ -4,20 +4,20 @@
 
 ROOT=$(shell pwd)
 VIRTUALENV=$(ROOT)/.venv
-PYTHON=$(VIRTUALENV)/bin/python3
-# We use 'uv run' for these tools to ensure the environment is correct
-BLACK=uv run black
-FLAKE8=uv run flake8
-ISORT=uv run isort
-PYRIGHT=uv run pyright
-PYTEST=uv run pytest
+UV_RUN=uv run
+BLACK=$(UV_RUN) black
+FLAKE8=$(UV_RUN) flake8
+ISORT=$(UV_RUN) isort
+PYRIGHT=$(UV_RUN) pyright
+PYTEST=$(UV_RUN) pytest
 PYRIGHTCONFIG=$(ROOT)/pyrightconfig.json
 
 # ---------------------------------------------------------------------------- #
 #                                Command Section                               #
 # ---------------------------------------------------------------------------- #
 
-.PHONY: check clean format install ship test venv install-openvm
+.PHONY: check clean format install ship test venv install-openvm run-openvm-loop1 \
+	docker-build fuzz-start fuzz-stop fuzz-logs
 
 $(VIRTUALENV):
 	uv venv
@@ -26,13 +26,31 @@ venv: $(VIRTUALENV)
 
 clean:
 	rm -rf $(VIRTUALENV) $(PYRIGHTCONFIG) uv.lock
+	find . -type d -name "__pycache__" -exec rm -rf {} +
 
 install: $(VIRTUALENV)
 	uv sync
 
 install-openvm: $(VIRTUALENV)
 	uv sync --package openvm-fuzzer
-	uv run openvm-fuzzer install ./openvm-src --zkvm-modification --commit-or-branch ca36de3803213da664b03d111801ab903d55e360
+	$(UV_RUN) openvm-fuzzer install ./openvm-src --zkvm-modification --commit-or-branch ca36de3803213da664b03d111801ab903d55e360
+
+run-openvm-loop1:
+	$(UV_RUN) openvm-fuzzer generate --seed 123 --out ./output --zkvm ./openvm-src
+
+docker-build:
+	docker build -t openvm-fuzzer -f projects/openvm-fuzzer/Dockerfile .
+
+fuzz-start: docker-build
+	chmod +x run_parallel.sh
+	./run_parallel.sh
+
+fuzz-stop:
+	docker ps -a --filter "name=beak_worker_" -q | xargs -r docker rm -f
+	@echo "All fuzzing workers stopped."
+
+fuzz-logs:
+	docker logs -f beak_worker_1
 
 $(PYRIGHTCONFIG):
 	@echo "Generating $(PYRIGHTCONFIG) for pyright ..."
@@ -60,330 +78,4 @@ test:
 	FUZZER_TEST=1 $(PYTEST) -v
 
 kill-all-fuzzer:
-	killall python3 -9; killall podman -9; killall r0vm -9; killall cargo -9
-
-stop-all-fuzzer:
-	podman stop --all
-
-# ---------------------------------------------------------------------------- #
-#                                  Experiments                                 #
-# ---------------------------------------------------------------------------- #
-
-# ---------------------------------- Explore --------------------------------- #
-
-.tmux-all-explore-template:
-	tmux new-window -n "$(ZKVM_TARGET)-explore-default" 'bash -c "make $(ZKVM_TARGET)-explore-default"; exec bash'
-	tmux new-window -n "$(ZKVM_TARGET)-explore-no-inline" 'bash -c "make $(ZKVM_TARGET)-explore-no-inline"; exec bash'
-	tmux new-window -n "$(ZKVM_TARGET)-explore-no-schedular" 'bash -c "make $(ZKVM_TARGET)-explore-no-schedular"; exec bash'
-	tmux new-window -n "$(ZKVM_TARGET)-explore-no-modification" 'bash -c "make $(ZKVM_TARGET)-explore-no-modification"; exec bash'
-
-tmux-all-explore:
-	$(MAKE) .tmux-all-explore-template ZKVM_TARGET=jolt
-	$(MAKE) .tmux-all-explore-template ZKVM_TARGET=nexus
-	$(MAKE) .tmux-all-explore-template ZKVM_TARGET=openvm
-	$(MAKE) .tmux-all-explore-template ZKVM_TARGET=pico
-	$(MAKE) .tmux-all-explore-template ZKVM_TARGET=risc0
-	$(MAKE) .tmux-all-explore-template ZKVM_TARGET=sp1
-
-# ---------------------------------- Refind ---------------------------------- #
-
-.tmux-all-refind-template:
-	tmux new-window -n "$(ZKVM_TARGET)-refind-default" 'bash -c "make $(ZKVM_TARGET)-refind-default"; exec bash'
-	tmux new-window -n "$(ZKVM_TARGET)-refind-no-inline" 'bash -c "make $(ZKVM_TARGET)-refind-no-inline"; exec bash'
-	tmux new-window -n "$(ZKVM_TARGET)-refind-no-schedular" 'bash -c "make $(ZKVM_TARGET)-refind-no-schedular"; exec bash'
-	tmux new-window -n "$(ZKVM_TARGET)-refind-no-modification" 'bash -c "make $(ZKVM_TARGET)-refind-no-modification"; exec bash'
-
-tmux-refind-default:
-	tmux new-window -n "jolt-refind-default" 'bash -c "make jolt-refind-default"; exec bash'
-	tmux new-window -n "nexus-refind-default" 'bash -c "make nexus-refind-default"; exec bash'
-	tmux new-window -n "risc0-refind-default" 'bash -c "make risc0-refind-default"; exec bash'
-
-tmux-refind-no-modification:
-	tmux new-window -n "jolt-refind-no-modification" 'bash -c "make jolt-refind-no-modification"; exec bash'
-	tmux new-window -n "nexus-refind-no-modification" 'bash -c "make nexus-refind-no-modification"; exec bash'
-	tmux new-window -n "risc0-refind-no-modification" 'bash -c "make risc0-refind-no-modification"; exec bash'
-
-tmux-all-refind:
-	$(MAKE) .tmux-all-refind-template ZKVM_TARGET=jolt
-	$(MAKE) .tmux-all-refind-template ZKVM_TARGET=nexus
-	$(MAKE) .tmux-all-refind-template ZKVM_TARGET=risc0
-
-tmux-jolt-all-refind:
-	$(MAKE) .tmux-all-refind-template ZKVM_TARGET=jolt
-
-tmux-nexus-all-refind:
-	$(MAKE) .tmux-all-refind-template ZKVM_TARGET=nexus
-
-tmux-risc0-all-refind:
-	$(MAKE) .tmux-all-refind-template ZKVM_TARGET=risc0
-
-# ---------------------------------- Check ---------------------------------- #
-
-.tmux-all-check-template:
-	tmux new-window -n "jolt-check-default" 'bash -c "make $(ZKVM_TARGET)-check-default"; exec bash'
-	tmux new-window -n "jolt-check-no-inline" 'bash -c "make $(ZKVM_TARGET)-check-no-inline"; exec bash'
-	tmux new-window -n "jolt-check-no-schedular" 'bash -c "make $(ZKVM_TARGET)-check-no-schedular"; exec bash'
-	tmux new-window -n "jolt-check-no-modification" 'bash -c "make $(ZKVM_TARGET)-check-no-modification"; exec bash'
-
-tmux-all-check:
-	$(MAKE) .tmux-all-check-template ZKVM_TARGET=jolt
-	$(MAKE) .tmux-all-check-template ZKVM_TARGET=nexus
-	$(MAKE) .tmux-all-check-template ZKVM_TARGET=risc0
-
-tmux-check-default:
-	tmux new-window -n "jolt-check-default" 'bash -c "make jolt-check-default"; exec bash'
-	tmux new-window -n "nexus-check-default" 'bash -c "make nexus-check-default"; exec bash'
-	tmux new-window -n "risc0-check-default" 'bash -c "make risc0-check-default"; exec bash'
-
-tmux-check-no-modification:
-	tmux new-window -n "jolt-check-no-modification" 'bash -c "make jolt-check-no-modification"; exec bash'
-	tmux new-window -n "nexus-check-no-modification" 'bash -c "make nexus-check-no-modification"; exec bash'
-	tmux new-window -n "risc0-check-no-modification" 'bash -c "make risc0-check-no-modification"; exec bash'
-
-tmux-jolt-all-check:
-	$(MAKE) .tmux-all-check-template ZKVM_TARGET=jolt
-
-tmux-nexus-all-check:
-	$(MAKE) .tmux-all-check-template ZKVM_TARGET=nexus
-
-tmux-risc0-all-check:
-	$(MAKE) .tmux-all-check-template ZKVM_TARGET=risc0
-
-# ---------------------------------------------------------------------------- #
-#                              Generic ZKVM Control                            #
-# ---------------------------------------------------------------------------- #
-
-.zkvm-explore-default:
-	NAMESPACE_POSTFIX="-explore-default" \
-	./projects/$(ZKVM_TARGET)-fuzzer/scripts/explore.sh
-
-.zkvm-explore-no-inline:
-	NAMESPACE_POSTFIX="-explore-no-inline" \
-	NO_INLINE_ASSEMBLY=true \
-	./projects/$(ZKVM_TARGET)-fuzzer/scripts/explore.sh
-
-.zkvm-explore-no-schedular:
-	NAMESPACE_POSTFIX="-explore-no-schedular" \
-	NO_SCHEDULAR=true \
-	./projects/$(ZKVM_TARGET)-fuzzer/scripts/explore.sh
-
-.zkvm-explore-no-modification:
-	NAMESPACE_POSTFIX="-explore-no-modification" \
-	TRACE_COLLECTION=false \
-	FAULT_INJECTION=false \
-	ZKVM_MODIFICATION=false \
-	./projects/$(ZKVM_TARGET)-fuzzer/scripts/explore.sh
-
-.zkvm-refind-default:
-	NAMESPACE_POSTFIX="-refind-default" \
-	./projects/$(ZKVM_TARGET)-fuzzer/scripts/refind.sh
-
-.zkvm-check-default:
-	NAMESPACE_POSTFIX="-check-default" \
-	FINDINGS_NAMESPACE_POSTFIX="-refind-default" \
-	./projects/$(ZKVM_TARGET)-fuzzer/scripts/check.sh
-
-.zkvm-refind-no-schedular:
-	NAMESPACE_POSTFIX="-refind-no-schedular" \
-	NO_SCHEDULAR=true \
-	./projects/$(ZKVM_TARGET)-fuzzer/scripts/refind.sh
-
-.zkvm-check-no-schedular:
-	NAMESPACE_POSTFIX="-check-no-schedular" \
-	NO_SCHEDULAR=true \
-	FINDINGS_NAMESPACE_POSTFIX="-refind-no-schedular" \
-	./projects/$(ZKVM_TARGET)-fuzzer/scripts/check.sh
-
-.zkvm-refind-no-inline:
-	NAMESPACE_POSTFIX="-refind-no-inline" \
-	NO_INLINE_ASSEMBLY=true \
-	./projects/$(ZKVM_TARGET)-fuzzer/scripts/refind.sh
-
-.zkvm-check-no-inline:
-	NAMESPACE_POSTFIX="-check-no-inline" \
-	NO_INLINE_ASSEMBLY=true \
-	FINDINGS_NAMESPACE_POSTFIX="-refind-no-inline" \
-	./projects/$(ZKVM_TARGET)-fuzzer/scripts/check.sh
-
-.zkvm-refind-no-modification:
-	NAMESPACE_POSTFIX="-refind-no-modification" \
-	TRACE_COLLECTION=false \
-	FAULT_INJECTION=false \
-	ZKVM_MODIFICATION=false \
-	./projects/$(ZKVM_TARGET)-fuzzer/scripts/refind.sh
-
-.zkvm-check-no-modification:
-	NAMESPACE_POSTFIX="-check-no-modification" \
-	TRACE_COLLECTION=false \
-	FAULT_INJECTION=false \
-	ZKVM_MODIFICATION=false \
-	FINDINGS_NAMESPACE_POSTFIX="-refind-no-modification" \
-	./projects/$(ZKVM_TARGET)-fuzzer/scripts/check.sh
-
-# ---------------------------------------------------------------------------- #
-#                                 Risc0 Control                                #
-# ---------------------------------------------------------------------------- #
-
-risc0-explore-default:
-	$(MAKE) .zkvm-explore-default ZKVM_TARGET=risc0
-
-risc0-explore-no-inline:
-	$(MAKE) .zkvm-explore-no-inline ZKVM_TARGET=risc0
-
-risc0-explore-no-schedular:
-	$(MAKE) .zkvm-explore-no-schedular ZKVM_TARGET=risc0
-
-risc0-explore-no-modification:
-	$(MAKE) .zkvm-explore-no-modification ZKVM_TARGET=risc0
-
-risc0-refind-default:
-	$(MAKE) .zkvm-refind-default ZKVM_TARGET=risc0
-
-risc0-check-default:
-	$(MAKE) .zkvm-check-default ZKVM_TARGET=risc0
-
-risc0-refind-no-schedular:
-	$(MAKE) .zkvm-refind-no-schedular ZKVM_TARGET=risc0
-
-risc0-check-no-schedular:
-	$(MAKE) .zkvm-check-no-schedular ZKVM_TARGET=risc0
-
-risc0-refind-no-inline:
-	$(MAKE) .zkvm-refind-no-inline ZKVM_TARGET=risc0
-
-risc0-check-no-inline:
-	$(MAKE) .zkvm-check-no-inline ZKVM_TARGET=risc0
-
-risc0-refind-no-modification:
-	$(MAKE) .zkvm-refind-no-modification ZKVM_TARGET=risc0
-
-risc0-check-no-modification:
-	$(MAKE) .zkvm-check-no-modification ZKVM_TARGET=risc0
-
-# ---------------------------------------------------------------------------- #
-#                                 Nexus Control                                #
-# ---------------------------------------------------------------------------- #
-
-nexus-explore-default:
-	$(MAKE) .zkvm-explore-default ZKVM_TARGET=nexus
-
-nexus-explore-no-inline:
-	$(MAKE) .zkvm-explore-no-inline ZKVM_TARGET=nexus
-
-nexus-explore-no-schedular:
-	$(MAKE) .zkvm-explore-no-schedular ZKVM_TARGET=nexus
-
-nexus-explore-no-modification:
-	$(MAKE) .zkvm-explore-no-modification ZKVM_TARGET=nexus
-
-nexus-refind-default:
-	$(MAKE) .zkvm-refind-default ZKVM_TARGET=nexus
-
-nexus-check-default:
-	$(MAKE) .zkvm-check-default ZKVM_TARGET=nexus
-
-nexus-refind-no-schedular:
-	$(MAKE) .zkvm-refind-no-schedular ZKVM_TARGET=nexus
-
-nexus-check-no-schedular:
-	$(MAKE) .zkvm-check-no-schedular ZKVM_TARGET=nexus
-
-nexus-refind-no-inline:
-	$(MAKE) .zkvm-refind-no-inline ZKVM_TARGET=nexus
-
-nexus-check-no-inline:
-	$(MAKE) .zkvm-check-no-inline ZKVM_TARGET=nexus
-
-nexus-refind-no-modification:
-	$(MAKE) .zkvm-refind-no-modification ZKVM_TARGET=nexus
-
-nexus-check-no-modification:
-	$(MAKE) .zkvm-check-no-modification ZKVM_TARGET=nexus
-
-# ---------------------------------------------------------------------------- #
-#                                  SP1 Control                                 #
-# ---------------------------------------------------------------------------- #
-
-sp1-explore-default:
-	$(MAKE) .zkvm-explore-default ZKVM_TARGET=sp1
-
-sp1-explore-no-inline:
-	$(MAKE) .zkvm-explore-no-inline ZKVM_TARGET=sp1
-
-sp1-explore-no-schedular:
-	$(MAKE) .zkvm-explore-no-schedular ZKVM_TARGET=sp1
-
-sp1-explore-no-modification:
-	$(MAKE) .zkvm-explore-no-modification ZKVM_TARGET=sp1
-
-# ---------------------------------------------------------------------------- #
-#                                 Jolt Control                                 #
-# ---------------------------------------------------------------------------- #
-
-jolt-explore-default:
-	$(MAKE) .zkvm-explore-default ZKVM_TARGET=jolt
-
-jolt-explore-no-inline:
-	$(MAKE) .zkvm-explore-no-inline ZKVM_TARGET=jolt
-
-jolt-explore-no-schedular:
-	$(MAKE) .zkvm-explore-no-schedular ZKVM_TARGET=jolt
-
-jolt-explore-no-modification:
-	$(MAKE) .zkvm-explore-no-modification ZKVM_TARGET=jolt
-
-jolt-refind-default:
-	$(MAKE) .zkvm-refind-default ZKVM_TARGET=jolt
-
-jolt-check-default:
-	$(MAKE) .zkvm-check-default ZKVM_TARGET=jolt
-
-jolt-refind-no-schedular:
-	$(MAKE) .zkvm-refind-no-schedular ZKVM_TARGET=jolt
-
-jolt-check-no-schedular:
-	$(MAKE) .zkvm-check-no-schedular ZKVM_TARGET=jolt
-
-jolt-refind-no-inline:
-	$(MAKE) .zkvm-refind-no-inline ZKVM_TARGET=jolt
-
-jolt-check-no-inline:
-	$(MAKE) .zkvm-check-no-inline ZKVM_TARGET=jolt
-
-jolt-refind-no-modification:
-	$(MAKE) .zkvm-refind-no-modification ZKVM_TARGET=jolt
-
-jolt-check-no-modification:
-	$(MAKE) .zkvm-check-no-modification ZKVM_TARGET=jolt
-
-# ---------------------------------------------------------------------------- #
-#                                OpenVM Control                                #
-# ---------------------------------------------------------------------------- #
-
-openvm-explore-default:
-	$(MAKE) .zkvm-explore-default ZKVM_TARGET=openvm
-
-openvm-explore-no-inline:
-	$(MAKE) .zkvm-explore-no-inline ZKVM_TARGET=openvm
-
-openvm-explore-no-schedular:
-	$(MAKE) .zkvm-explore-no-schedular ZKVM_TARGET=openvm
-
-openvm-explore-no-modification:
-	$(MAKE) .zkvm-explore-no-modification ZKVM_TARGET=openvm
-
-# ---------------------------------------------------------------------------- #
-#                                Pico Control                                  #
-# ---------------------------------------------------------------------------- #
-
-pico-explore-default:
-	$(MAKE) .zkvm-explore-default ZKVM_TARGET=pico
-
-pico-explore-no-inline:
-	$(MAKE) .zkvm-explore-no-inline ZKVM_TARGET=pico
-
-pico-explore-no-schedular:
-	$(MAKE) .zkvm-explore-no-schedular ZKVM_TARGET=pico
-
-pico-explore-no-modification:
-	$(MAKE) .zkvm-explore-no-modification ZKVM_TARGET=pico
+	killall python3 -9; killall cargo -9

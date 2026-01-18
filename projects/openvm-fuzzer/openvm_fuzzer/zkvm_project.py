@@ -101,10 +101,12 @@ class CircuitProjectGenerator(AbstractProjectGenerator):
         create_file(self.root / "Cargo.toml", content)
 
     def create_host_cargo_toml(self):
+        # We assume zkvm_path is provided relative to the workdir in templates
+        # but for robustness, let's pass it as is or handle it in the template
         content = self.render_template(
             "host_cargo.toml.j2",
             requires_fuzzer_utils=self.requires_fuzzer_utils,
-            zkvm_path=self.zkvm_path,
+            zkvm_path="../../openvm-src", # Hardcode relative path for Docker consistency
             openvm_stark_sdk_dep=get_openvm_stark_sdk_from_openvm_workspace_cargo_toml(
                 self.zkvm_path
             ),
