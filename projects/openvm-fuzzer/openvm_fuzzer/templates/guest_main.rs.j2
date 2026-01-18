@@ -23,7 +23,7 @@ pub fn main() {
             "{{ inst }}",
             {% endfor %}
 
-            // Explicitly bind to physical registers x1-x15
+            // Bind to physical registers
             {% for reg_idx in initial_regs.keys() %}
             inout("x{{ reg_idx }}") x{{ reg_idx }},
             {% endfor %}
@@ -32,8 +32,9 @@ pub fn main() {
         );
     }
 
-    // 3. Reveal final results back to Host
+    // 3. Reveal final results back to Host using stream 0
     {% for reg_idx in initial_regs.keys() %}
-    reveal_u32(x{{ reg_idx }}, {{ reg_idx }}); 
+    reveal_u32({{ reg_idx }}, 0); 
+    reveal_u32(x{{ reg_idx }}, 0); 
     {% endfor %}
 }
