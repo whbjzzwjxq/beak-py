@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+
+import logging
+from random import Random
+
+from pico_fuzzer.fuzzer import CircuitFuzzer, create_circuit_config
+from pico_fuzzer.settings import PICO_AVAILABLE_COMMITS_OR_BRANCHES
+from pico_fuzzer.zkvm_project import CircuitProjectGenerator
+from pico_fuzzer.zkvm_repository.install import install_pico
+from zkvm_fuzzer_utils.cli import FuzzerClient
+from zkvm_fuzzer_utils.fuzzer import generate_metamorphic_bundle_from_config
+
+logger = logging.getLogger("fuzzer")
+
+
+class PicoFuzzerClient(FuzzerClient):
+    def run(self):
+        assert self.out_dir, "no output directory"
+        assert self.zkvm_dir, "no zkvm library"
+
+        logger.info(f"=== Start {self.logger_prefix} Fuzzing Campaign ===")
+        logger.info(f" * seed: {self.seed}")
+        logger.info(f" * output: {self.out_dir})")
+        logger.info(f" * library: {self.zkvm_dir})")
+        logger.info(f" * trace: {self.is_trace_collection}")
+        logger.info(f" * injection: {self.is_fault_injection}")
+        logger.info(f" * schedular: {self.is_no_schedular}")
+        logger.info(f" * commit: {self.commit_or_branch}")
+        logger.info("===")
+
+        fuzzer = CircuitFuzzer(
+            self.out_dir,
+            self.zkvm_dir,
+            Random(self.seed),
+            self.is_only_modify_word,
+            self.is_no_inline_assembly,
+        )
+
+        if self.is_fault_injection:
+            fuzzer.enable_fault_injection()
+
+        if self.is_trace_collection:
+            fuzzer.enable_trace_collection()
+
+        if self.timeout is not None and self.timeout > 0:
+            fuzzer.enable_timeout(self.timeout)
+
+        if self.is_no_schedular:
+            fuzzer.disable_injection_schedular()
+
+        fuzzer.loop()
+
+        logger.info(f"=== End {self.logger_prefix} Fuzzing Campaign ===")
+
+    def install(self):
+        assert self.zkvm_dir, "no zkvm library"
+        install_pico(
+            self.zkvm_dir,
+            self.commit_or_branch,
+            enable_zkvm_modification=(not self.is_zkvm_modification),
+        )
+
+    def check(self):
+        raise NotImplementedError("No bugs to check yet!")
+
+    def generate(self):
+        assert self.out_dir, "no output directory"
+        assert self.zkvm_dir, "no zkvm library"
+        circuit_config = create_circuit_config(self.no_inline_assembly)
+        circuits = generate_metamorphic_bundle_from_config(circuit_config, self.seed)
+        CircuitProjectGenerator(
+            self.out_dir,
+            self.zkvm_dir,
+            circuits,
+            self.is_fault_injection,
+            self.is_trace_collection,
+        ).create()
+
+
+def app():
+    cli = PicoFuzzerClient("PICO", "Pico", PICO_AVAILABLE_COMMITS_OR_BRANCHES)
+    cli.start()
+
+
+if __name__ == "__main__":
+    app()

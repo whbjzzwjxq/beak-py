@@ -1,0 +1,40 @@
+{
+    "rules" : [
+        { "name" : "assertion-weakening-with-equ-to-geq"
+        , "match" : "{assert (?a == ?b)}"
+        , "rewrite" : "{assert (?a >= ?b)}"
+        },
+        { "name" : "assertion-weakening-with-equ-to-leq"
+        , "match" : "{assert (?a == ?b)}"
+        , "rewrite" : "{assert (?a <= ?b)}"
+        },
+        { "name" : "assertion-weakening-with-gth-to-geq"
+        , "match" : "{assert (?a > ?b)}"
+        , "rewrite" : "{assert (?a >= ?b)}"
+        },
+        { "name" : "assertion-weakening-with-lth-to-leq"
+        , "match" : "{assert (?a < ?b)}"
+        , "rewrite" : "{assert (?a <= ?b)}"
+        },
+        { "name" : "assertion-weakening-with-gth-to-neq"
+        , "match" : "{assert (?a > ?b)}"
+        , "rewrite" : "{assert (?a != ?b)}"
+        },
+        { "name" : "assertion_weakening-with-lth-to-neq"
+        , "match" : "{assert (?a < ?b)}"
+        , "rewrite" : "{assert (?a != ?b)}"
+        },
+        { "name" : "assertion-weakening-with-equ-to-xor"
+        , "match" : "{assert (?a == ?b)}"
+        , "rewrite" : "{assert ((?a ^ ?b) == 0)}"
+        },
+        { "name" : "assertion-weakening-with-and-to-lor"
+        , "match" : "{assert (?a && ?b)}"
+        , "rewrite" : "{assert (?a || ?b)}"
+        },
+        { "name" : "assertion-weakening-with-true"
+        , "match" : "{assert ?a}"
+        , "rewrite" : "{assert (?a || T)}"
+        }
+    ]
+}
