@@ -2,8 +2,10 @@ import logging
 import os
 import re
 import resource
+import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -132,6 +134,7 @@ def invoke_command(
     memory: int | None = None,
     is_log_debug: bool = True,
     explicit_clean_zombies=False,
+    abort_on_stderr_regexes: list[str] | None = None,
 ) -> ExecStatus:
 
     # ------------------------- debug initial information ------------------------ #
@@ -160,26 +163,128 @@ def invoke_command(
 
     start_time = time.time()
     is_timeout = False
-    try:
-        complete_proc = subprocess.run(
+    if not abort_on_stderr_regexes:
+        try:
+            complete_proc = subprocess.run(
+                command,
+                close_fds=True,
+                shell=False,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=-1,
+                cwd=cwd,
+                preexec_fn=generate_preexec_fn_memory_limit(memory),
+                timeout=timeout,
+                env=combined_env,
+            )
+            stdout_bytes, stderr_bytes = complete_proc.stdout, complete_proc.stderr
+            returncode = complete_proc.returncode
+        except subprocess.TimeoutExpired as timeErr:
+            stdout_bytes, stderr_bytes = timeErr.stdout, timeErr.stderr
+            returncode = 124  # timeout return status
+            is_timeout = True
+    else:
+        stdout_chunks: list[bytes] = []
+        stderr_chunks: list[bytes] = []
+        abort_patterns = [re.compile(p) for p in abort_on_stderr_regexes]
+        abort_event = threading.Event()
+        abort_timestamp: list[float | None] = [None]
+
+        def _read_stream(stream, chunks: list[bytes], *, check_abort: bool):
+            try:
+                for raw_line in iter(stream.readline, b""):
+                    chunks.append(raw_line)
+                    if check_abort and (not abort_event.is_set()):
+                        line = remove_ansi_escape_sequences(make_utf8(raw_line))
+                        if any(p.search(line) for p in abort_patterns):
+                            abort_event.set()
+                            abort_timestamp[0] = time.time()
+            finally:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+
+        # Create a new process group so we can terminate children (rustc/cc1plus) promptly.
+        mem_preexec = generate_preexec_fn_memory_limit(memory)
+
+        def _preexec():
+            os.setsid()
+            if mem_preexec is not None:
+                mem_preexec()
+
+        proc = subprocess.Popen(
             command,
             close_fds=True,
             shell=False,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            bufsize=-1,
+            bufsize=0,
             cwd=cwd,
-            preexec_fn=generate_preexec_fn_memory_limit(memory),
-            timeout=timeout,
+            preexec_fn=_preexec,
             env=combined_env,
         )
-        stdout_bytes, stderr_bytes = complete_proc.stdout, complete_proc.stderr
-        returncode = complete_proc.returncode
-    except subprocess.TimeoutExpired as timeErr:
-        stdout_bytes, stderr_bytes = timeErr.stdout, timeErr.stderr
-        returncode = 124  # timeout return status
-        is_timeout = True
+        assert proc.stdout is not None
+        assert proc.stderr is not None
+
+        stdout_thread = threading.Thread(target=_read_stream, args=(proc.stdout, stdout_chunks), kwargs={"check_abort": False})
+        stderr_thread = threading.Thread(target=_read_stream, args=(proc.stderr, stderr_chunks), kwargs={"check_abort": True})
+        stdout_thread.start()
+        stderr_thread.start()
+
+        killed = False
+        kill_started: float | None = None
+        try:
+            while True:
+                # Give the compiler a brief grace period to print full diagnostics after
+                # the first error line, then terminate the whole process group.
+                if abort_event.is_set() and (not killed):
+                    ts = abort_timestamp[0]
+                    if ts is not None and (time.time() - ts) >= 1.0:
+                        try:
+                            os.killpg(proc.pid, signal.SIGTERM)
+                        except Exception:
+                            proc.terminate()
+                        killed = True
+                        kill_started = time.time()
+
+                try:
+                    returncode = proc.wait(timeout=0.2)
+                    break
+                except subprocess.TimeoutExpired:
+                    if killed and kill_started is not None and (time.time() - kill_started) > 2.0:
+                        try:
+                            os.killpg(proc.pid, signal.SIGKILL)
+                        except Exception:
+                            proc.kill()
+                        returncode = proc.wait(timeout=2)
+                        break
+
+                    if timeout is not None and (time.time() - start_time) > timeout:
+                        is_timeout = True
+                        try:
+                            os.killpg(proc.pid, signal.SIGTERM)
+                        except Exception:
+                            proc.terminate()
+                        try:
+                            returncode = proc.wait(timeout=2)
+                        except Exception:
+                            try:
+                                os.killpg(proc.pid, signal.SIGKILL)
+                            except Exception:
+                                proc.kill()
+                            returncode = 124
+                        break
+        finally:
+            stdout_thread.join(timeout=2)
+            stderr_thread.join(timeout=2)
+
+        stdout_bytes = b"".join(stdout_chunks)
+        stderr_bytes = b"".join(stderr_chunks)
+        if abort_event.is_set() and returncode == 0:
+            returncode = 1
 
     end_time = time.time()
     delta_time = end_time - start_time

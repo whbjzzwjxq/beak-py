@@ -4,6 +4,7 @@
 
 ROOT=$(shell pwd)
 VIRTUALENV=$(ROOT)/.venv
+export UV_CACHE_DIR ?= $(ROOT)/.uv-cache
 UV_RUN=uv run
 BLACK=$(UV_RUN) black
 FLAKE8=$(UV_RUN) flake8
@@ -16,7 +17,7 @@ PYRIGHTCONFIG=$(ROOT)/pyrightconfig.json
 #                                Command Section                               #
 # ---------------------------------------------------------------------------- #
 
-.PHONY: check clean format install ship test venv install-openvm run-openvm-loop1 \
+.PHONY: check clean format install ship test venv install-openvm run-openvm-loop1 install-sp1 run-sp1-loop1 install-risc0 run-risc0-loop1 \
 	docker-build fuzz-start fuzz-stop fuzz-logs
 
 $(VIRTUALENV):
@@ -37,6 +38,23 @@ install-openvm: $(VIRTUALENV)
 
 run-openvm-loop1:
 	$(UV_RUN) openvm-fuzzer generate --seed 123 --out ./output --zkvm ./openvm-src
+
+install-sp1: $(VIRTUALENV)
+	uv sync --package sp1-fuzzer
+	# NOTE: The install step will reset/clean the repo at the given path.
+	# Use a dedicated repo checkout at `./sp1-src` (do NOT point at a working copy with changes).
+	$(UV_RUN) sp1-fuzzer install ./sp1-src --commit-or-branch 7f643da16813af4c0fbaad4837cd7409386cf38c
+
+run-sp1-loop1:
+	$(UV_RUN) sp1-fuzzer run --seed 123 --out ./output --zkvm ./sp1-src --commit-or-branch all
+
+install-risc0: $(VIRTUALENV)
+	uv sync --package risc0-fuzzer
+	# NOTE: The install step will reset/clean the repo at the given path.
+	$(UV_RUN) risc0-fuzzer install ./risc0-src --commit-or-branch ebd64e43e7d953e0edcee2d4e0225b75458d80b5
+
+run-risc0-loop1:
+	$(UV_RUN) risc0-fuzzer run --seed 123 --out ./output --zkvm ./risc0-src --commit-or-branch all
 
 docker-build:
 	docker build -t openvm-fuzzer -f projects/openvm-fuzzer/Dockerfile .

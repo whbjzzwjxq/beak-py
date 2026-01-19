@@ -1,5 +1,5 @@
 [project]
-name = "beak-monorepo"
+name = "beak-py"
 version = "0.1.0"
 description = "A monorepo for zkVM fuzzing"
 requires-python = ">=3.10"
@@ -8,6 +8,8 @@ dependencies = [
     "circil",
     "zkvm-fuzzer-utils",
     "openvm-fuzzer",
+    "sp1-fuzzer",
+    "risc0-fuzzer",
     "beak-core",
 ]
 
@@ -26,6 +28,8 @@ workspace = { members = ["libs/*", "projects/*"] }
 circil = { workspace = true }
 zkvm-fuzzer-utils = { workspace = true }
 openvm-fuzzer = { workspace = true }
+sp1-fuzzer = { workspace = true }
+risc0-fuzzer = { workspace = true }
 beak-core = { workspace = true }
 
 [tool.black]
@@ -53,6 +57,8 @@ pythonpath = [
     "libs/beak-core",
     "libs/circil",
     "libs/zkvm-fuzzer-utils",
-    "projects/openvm-fuzzer"
+    "projects/openvm-fuzzer",
+    "projects/sp1-fuzzer",
+    "projects/risc0-fuzzer",
 ]
 testpaths = ["libs", "projects"]

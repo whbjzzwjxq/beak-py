@@ -7,8 +7,9 @@ except ImportError:  # pragma: no cover
         pass
 
 
-class IRType(StrEnum):
-    """Basic types for the IR Expression nodes"""
+class InstrKind(StrEnum):
+    GENERIC = "generic"
 
-    Field = "field"
-    Bool = "bool"
+
+class InjectionKind(StrEnum):
+    NONE = "none"
