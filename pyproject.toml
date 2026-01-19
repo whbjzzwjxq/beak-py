@@ -11,6 +11,14 @@ dependencies = [
     "beak-core",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "black>=24.10.0",
+    "isort>=5.13.2",
+    "pyright>=1.1.386",
+]
+
 [tool.uv]
 workspace = { members = ["libs/*", "projects/*"] }
 
