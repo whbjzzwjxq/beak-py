@@ -29,6 +29,10 @@ class RISCVOracle:
             pass
 
         # 4. Read back results
-        instance.expected_results = {
-            idx: mu.reg_read(UC_RISCV_REG_X0 + idx) for idx in instance.initial_regs.keys()
-        }
+        instance.expected_results = {}
+        for idx in instance.initial_regs.keys():
+            val = mu.reg_read(UC_RISCV_REG_X0 + idx)
+            # Convert to signed 32-bit integer for easier assertions
+            if val & 0x80000000:
+                val -= 0x100000000
+            instance.expected_results[idx] = val
