@@ -8,7 +8,7 @@ from random import Random
 
 from beak_core.generator import RISCVGenerator
 from beak_core.oracle import RISCVOracle
-from beak_core.types import FuzzingInstSeqInstance
+from beak_core.rv32im import FuzzingInstance
 
 from openvm_fuzzer.kinds import InjectionKind, InstrKind
 from openvm_fuzzer.settings import (
@@ -29,7 +29,7 @@ logger = logging.getLogger("fuzzer")
 
 class BeakFuzzer(FuzzerCore[InstrKind, InjectionKind]):
     commit_or_branch: str
-    instance: FuzzingInstSeqInstance | None
+    instance: FuzzingInstance | None
 
     def __init__(
         self, project_dir: Path, zkvm_dir: Path, rng: Random, commit_or_branch: str,

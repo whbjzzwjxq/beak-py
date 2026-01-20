@@ -2,7 +2,7 @@ import io
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
-from beak_core.types import FuzzingInstSeqInstance
+from beak_core.rv32im import FuzzingInstance
 from zkvm_fuzzer_utils.file import create_file
 from zkvm_fuzzer_utils.project import AbstractProjectGenerator
 
@@ -51,13 +51,13 @@ def get_openvm_stark_sdk_from_openvm_workspace_cargo_toml(zkvm_path: Path) -> st
 
 class CircuitProjectGenerator(AbstractProjectGenerator):
     commit_or_branch: str
-    instance: FuzzingInstSeqInstance
+    instance: FuzzingInstance
 
     def __init__(
         self,
         root: Path,
         zkvm_path: Path,
-        instance: FuzzingInstSeqInstance,
+        instance: FuzzingInstance,
         fault_injection: bool,
         trace_collection: bool,
         commit_or_branch: str,
