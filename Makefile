@@ -17,7 +17,7 @@ PYRIGHTCONFIG=$(ROOT)/pyrightconfig.json
 #                                Command Section                               #
 # ---------------------------------------------------------------------------- #
 
-.PHONY: check clean format install ship test venv install-openvm run-openvm-loop1 install-sp1 run-sp1-loop1 install-risc0 run-risc0-loop1 \
+.PHONY: check clean format install ship test venv install-openvm run-openvm-loop1 install-sp1 run-sp1-loop1 install-risc0 run-risc0-loop1 install-pico run-pico-loop1 install-jolt run-jolt-loop1 install-nexus run-nexus-loop1 \
 	docker-build fuzz-start fuzz-stop fuzz-logs
 
 $(VIRTUALENV):
@@ -55,6 +55,30 @@ install-risc0: $(VIRTUALENV)
 
 run-risc0-loop1:
 	$(UV_RUN) risc0-fuzzer run --seed 123 --out ./output --zkvm ./risc0-src --commit-or-branch all
+
+install-pico: $(VIRTUALENV)
+	uv sync --package pico-fuzzer
+	# NOTE: The install step will reset/clean the repo at the given path.
+	$(UV_RUN) pico-fuzzer install ./pico-src --commit-or-branch dd5b7d1f4e164d289d110f1688509a22af6b241c
+
+run-pico-loop1:
+	$(UV_RUN) pico-fuzzer run --seed 123 --out ./output --zkvm ./pico-src --commit-or-branch all
+
+install-jolt: $(VIRTUALENV)
+	uv sync --package jolt-fuzzer
+	# NOTE: The install step will reset/clean the repo at the given path.
+	$(UV_RUN) jolt-fuzzer install ./jolt-src --commit-or-branch main
+
+run-jolt-loop1:
+	$(UV_RUN) jolt-fuzzer run --seed 123 --out ./output --zkvm ./jolt-src --commit-or-branch all
+
+install-nexus: $(VIRTUALENV)
+	uv sync --package nexus-fuzzer
+	# NOTE: The install step will reset/clean the repo at the given path.
+	$(UV_RUN) nexus-fuzzer install ./nexus-src --commit-or-branch main
+
+run-nexus-loop1:
+	$(UV_RUN) nexus-fuzzer run --seed 123 --out ./output --zkvm ./nexus-src --commit-or-branch all
 
 docker-build:
 	docker build -t openvm-fuzzer -f projects/openvm-fuzzer/Dockerfile .

@@ -123,6 +123,9 @@ ipython_config.py
 openvm-src/
 risc0-src/
 sp1-src/
+pico-src/
+jolt-src/
+nexus-src/
 
 # pyenv
 #   For a library or package, you might want to ignore these files since the code is
