@@ -2,16 +2,16 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from beak_core.types import FuzzingInstSeqInstance
+from beak_core.rv32im import FuzzingInstance
 from pico_fuzzer.settings import RUST_TOOLCHAIN_VERSION
 from zkvm_fuzzer_utils.file import create_file
 from zkvm_fuzzer_utils.project import AbstractProjectGenerator
 
 
 class InstructionProjectGenerator(AbstractProjectGenerator):
-    instance: FuzzingInstSeqInstance
+    instance: FuzzingInstance
 
-    def __init__(self, root: Path, zkvm_path: Path, instance: FuzzingInstSeqInstance):
+    def __init__(self, root: Path, zkvm_path: Path, instance: FuzzingInstance):
         super().__init__(root, zkvm_path)
         self.instance = instance
         self.template_env = Environment(
@@ -43,7 +43,7 @@ class InstructionProjectGenerator(AbstractProjectGenerator):
             self.root / "app" / "src" / "main.rs",
             self.render_template(
                 "app_main.rs.j2",
-                instructions=self.instance.instructions,
+                instructions=[inst.asm for inst in self.instance.instructions],
                 initial_regs=regs,
             ),
         )
@@ -60,4 +60,3 @@ class InstructionProjectGenerator(AbstractProjectGenerator):
                 output_word_count=output_word_count,
             ),
         )
-

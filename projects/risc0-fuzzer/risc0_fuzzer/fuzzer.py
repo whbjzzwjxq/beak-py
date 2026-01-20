@@ -6,7 +6,7 @@ from random import Random
 
 from beak_core.generator import RISCVGenerator
 from beak_core.oracle import RISCVOracle
-from beak_core.types import FuzzingInstSeqInstance
+from beak_core.rv32im import FuzzingInstance
 from risc0_fuzzer.kinds import InjectionKind, InstrKind
 from risc0_fuzzer.settings import TIMEOUT_PER_BUILD, TIMEOUT_PER_RUN
 from risc0_fuzzer.zkvm_project import InstructionProjectGenerator
@@ -21,7 +21,7 @@ logger = logging.getLogger("fuzzer")
 
 class Risc0BeakFuzzer(FuzzerCore[InstrKind, InjectionKind]):
     commit_or_branch: str
-    instance: FuzzingInstSeqInstance | None
+    instance: FuzzingInstance | None
 
     def __init__(self, project_dir: Path, zkvm_dir: Path, rng: Random, commit_or_branch: str):
         config = FuzzerConfig(
@@ -56,7 +56,7 @@ class Risc0BeakFuzzer(FuzzerCore[InstrKind, InjectionKind]):
                 self.project_dir.mkdir(parents=True, exist_ok=True)
 
             num_insts = self.random.randint(1, 8)
-            denied_prefixes = (
+            denied_mnemonics = {
                 # syscalls
                 "ecall",
                 "ebreak",
@@ -78,14 +78,10 @@ class Risc0BeakFuzzer(FuzzerCore[InstrKind, InjectionKind]):
                 "sb",
                 "sh",
                 "sw",
-            )
+            }
             for _ in range(50):
                 candidate = self.generator.generate_instance(num_insts=num_insts)
-                if all(
-                    ("\n" not in inst)
-                    and (not inst.strip().startswith(denied_prefixes))
-                    for inst in candidate.instructions
-                ):
+                if all(inst.mnemonic.literal not in denied_mnemonics for inst in candidate.instructions):
                     self.instance = candidate
                     break
             else:

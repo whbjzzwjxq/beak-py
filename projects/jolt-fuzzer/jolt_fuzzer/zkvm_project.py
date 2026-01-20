@@ -2,18 +2,18 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from beak_core.types import FuzzingInstSeqInstance
+from beak_core.rv32im import FuzzingInstance
 from jolt_fuzzer.settings import get_rust_toolchain_version
 from zkvm_fuzzer_utils.file import create_file
 from zkvm_fuzzer_utils.project import AbstractProjectGenerator
 
 
 class InstructionProjectGenerator(AbstractProjectGenerator):
-    instance: FuzzingInstSeqInstance
+    instance: FuzzingInstance
     commit_or_branch: str
     cached_patch_crates_io: str | None
 
-    def __init__(self, root: Path, zkvm_path: Path, instance: FuzzingInstSeqInstance, commit_or_branch: str):
+    def __init__(self, root: Path, zkvm_path: Path, instance: FuzzingInstance, commit_or_branch: str):
         super().__init__(root, zkvm_path)
         self.instance = instance
         self.commit_or_branch = commit_or_branch
@@ -98,7 +98,7 @@ class InstructionProjectGenerator(AbstractProjectGenerator):
             self.render_template(
                 "guest_lib.rs.j2",
                 initial_regs=regs,
-                instructions=self.instance.instructions,
+                instructions=[inst.asm for inst in self.instance.instructions],
                 output_word_count=output_word_count,
             ),
         )

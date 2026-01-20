@@ -2,15 +2,15 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from beak_core.types import FuzzingInstSeqInstance
+from beak_core.rv32im import FuzzingInstance
 from zkvm_fuzzer_utils.file import create_file
 from zkvm_fuzzer_utils.project import AbstractProjectGenerator
 
 
 class InstructionProjectGenerator(AbstractProjectGenerator):
-    instance: FuzzingInstSeqInstance
+    instance: FuzzingInstance
 
-    def __init__(self, root: Path, zkvm_path: Path, instance: FuzzingInstSeqInstance):
+    def __init__(self, root: Path, zkvm_path: Path, instance: FuzzingInstance):
         super().__init__(root, zkvm_path)
         self.instance = instance
         self.template_env = Environment(
@@ -54,9 +54,8 @@ class InstructionProjectGenerator(AbstractProjectGenerator):
             self.root / "methods" / "guest" / "src" / "main.rs",
             self.render_template(
                 "guest_main.rs.j2",
-                instructions=self.instance.instructions,
+                instructions=[inst.asm for inst in self.instance.instructions],
                 initial_regs=regs,
                 output_word_count=output_word_count,
             ),
         )
-
