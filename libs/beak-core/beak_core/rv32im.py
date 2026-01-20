@@ -189,12 +189,17 @@ class Instruction:
 
     def __get_asm(self) -> str:
         template = self.mnemonic.assembly_template
+        imm = self.imm if self.imm is not None else 0
+        # RV32 shift-immediate instructions encode shamt in 5 bits. Our encoder already masks
+        # the immediate, but emitting the raw value breaks inline asm compilation.
+        if self.mnemonic.literal in ("slli", "srli", "srai"):
+            imm &= 0x1F
         return template.format(
             mnemonic=self.mnemonic.literal,
             rd=self.rd,
             rs1=self.rs1,
             rs2=self.rs2,
-            imm=self.imm if self.imm is not None else 0,
+            imm=imm,
         )
 
     def __get_binary(self) -> bytes:

@@ -17,7 +17,7 @@ PYRIGHTCONFIG=$(ROOT)/pyrightconfig.json
 #                                Command Section                               #
 # ---------------------------------------------------------------------------- #
 
-.PHONY: check clean format install ship test venv install-openvm run-openvm-loop1 install-sp1 run-sp1-loop1 install-risc0 run-risc0-loop1 install-pico run-pico-loop1 install-jolt run-jolt-loop1 install-nexus run-nexus-loop1 \
+.PHONY: check clean format install ship test venv install-openvm run-openvm-loop1 install-sp1 run-sp1-loop1 run-sp1-loop1-7f643da run-sp1-loop1-f3326e6 run-sp1-loop1-811a3f2 install-risc0 run-risc0-loop1 install-pico run-pico-loop1 install-jolt run-jolt-loop1 install-nexus run-nexus-loop1 \
 	docker-build fuzz-start fuzz-stop fuzz-logs
 
 $(VIRTUALENV):
@@ -47,6 +47,15 @@ install-sp1: $(VIRTUALENV)
 
 run-sp1-loop1:
 	$(UV_RUN) sp1-fuzzer run --seed 123 --out ./output --zkvm ./sp1-src --commit-or-branch all
+
+run-sp1-loop1-7f643da:
+	$(UV_RUN) sp1-fuzzer run --seed 123 --out ./output --zkvm ./sp1-src --commit-or-branch 7f643da16813af4c0fbaad4837cd7409386cf38c
+
+run-sp1-loop1-f3326e6:
+	$(UV_RUN) sp1-fuzzer run --seed 123 --out ./output --zkvm ./sp1-src --commit-or-branch f3326e6d0bf78d6b4650ea1e26c501d72fb3c90b
+
+run-sp1-loop1-811a3f2:
+	$(UV_RUN) sp1-fuzzer run --seed 123 --out ./output --zkvm ./sp1-src --commit-or-branch 811a3f2c03914088c7c9e1774266934a3f9f5359
 
 install-risc0: $(VIRTUALENV)
 	uv sync --package risc0-fuzzer

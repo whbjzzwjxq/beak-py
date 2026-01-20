@@ -6,7 +6,7 @@ from random import Random
 
 from beak_core.generator import RISCVGenerator
 from beak_core.oracle import RISCVOracle
-from beak_core.rv32im import FuzzingInstance
+from beak_core.rv32im import DEFAULT_DATA_BASE, FuzzingInstance
 from sp1_fuzzer.kinds import InjectionKind, InstrKind
 from sp1_fuzzer.settings import TIMEOUT_PER_BUILD, TIMEOUT_PER_RUN
 from sp1_fuzzer.zkvm_project import InstructionProjectGenerator
@@ -71,10 +71,26 @@ class Sp1BeakFuzzer(FuzzerCore[InstrKind, InjectionKind]):
                 "bgeu",
                 "jal",
                 "jalr",
+                # unsupported in some zkVM executors
+                "fence",
             }
             for _ in range(50):
                 candidate = self.generator.generate_instance(num_insts=num_insts)
                 if all(inst.mnemonic.literal not in denied_mnemonics for inst in candidate.instructions):
+                    # If the generator emits load/store from non-memory-focused rules, ensure bases are
+                    # mapped to the safe data region so oracle/prover won't fault trivially.
+                    for inst in candidate.instructions:
+                        if inst.mnemonic.literal in {
+                            "lb",
+                            "lh",
+                            "lw",
+                            "lbu",
+                            "lhu",
+                            "sb",
+                            "sh",
+                            "sw",
+                        } and inst.rs1 is not None:
+                            candidate.initial_regs[inst.rs1] = DEFAULT_DATA_BASE
                     self.instance = candidate
                     break
             else:

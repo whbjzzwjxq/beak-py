@@ -29,7 +29,7 @@ pub fn main() {
             inout("x{{ reg_idx }}") x{{ reg_idx }},
             {% endfor %}
             final_x0 = out(reg) final_x0,
-            options(nostack, nomem)
+            options(nostack)
         );
     }
 
@@ -43,4 +43,3 @@ pub fn main() {
     {% endif %}
     {% endfor %}
 }
-

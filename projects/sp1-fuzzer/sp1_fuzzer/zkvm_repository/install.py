@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from sp1_fuzzer.settings import SP1_ZKVM_GIT_REPOSITORY
+from sp1_fuzzer.settings import SP1_ZKVM_GIT_REPOSITORY, resolve_sp1_commit
 from zkvm_fuzzer_utils.git import (
     GitException,
     git_checkout,
@@ -29,6 +29,8 @@ def install_sp1(
 
     if commit_or_branch == "all":
         raise SP1ManagerException("'all' is not a valid install target; pick a concrete commit")
+
+    commit_or_branch = resolve_sp1_commit(commit_or_branch)
 
     if not is_git_repository(sp1_install_path):
         logger.info(f"cloning sp1 repo to {sp1_install_path}")

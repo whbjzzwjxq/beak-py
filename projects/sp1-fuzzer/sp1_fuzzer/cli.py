@@ -4,7 +4,7 @@ import logging
 from random import Random
 
 from sp1_fuzzer.fuzzer import Sp1BeakFuzzer
-from sp1_fuzzer.settings import SP1_AVAILABLE_COMMITS_OR_BRANCHES
+from sp1_fuzzer.settings import SP1_AVAILABLE_COMMITS_OR_BRANCHES, iter_sp1_snapshots, resolve_sp1_commit
 from sp1_fuzzer.zkvm_repository.install import install_sp1
 from zkvm_fuzzer_utils.cli import FuzzerClient
 
@@ -12,7 +12,8 @@ logger = logging.getLogger("fuzzer")
 
 
 def _iter_supported_commits() -> list[str]:
-    return [c for c in SP1_AVAILABLE_COMMITS_OR_BRANCHES if c != "all"]
+    # For "all", we want a stable set of named snapshots (no duplicate aliases/hashes).
+    return iter_sp1_snapshots()
 
 
 class SP1FuzzerClient(FuzzerClient):
@@ -30,12 +31,15 @@ class SP1FuzzerClient(FuzzerClient):
         commits = _iter_supported_commits() if self.commit_or_branch == "all" else [self.commit_or_branch]
 
         for commit in commits:
+            resolved = resolve_sp1_commit(commit)
             # Ensure repo is on the correct commit before building.
-            install_sp1(self.zkvm_dir, commit)
+            install_sp1(self.zkvm_dir, resolved)
 
-            fuzzer_out = self.out_dir / f"sp1-{commit[:7]}"
+            # Keep output dirs stable and human-readable for snapshot aliases.
+            label = commit if commit in {"s26", "s27", "s29"} else commit[:7]
+            fuzzer_out = self.out_dir / f"sp1-{label}"
             fuzzer_out.mkdir(parents=True, exist_ok=True)
-            fuzzer = Sp1BeakFuzzer(fuzzer_out, self.zkvm_dir, Random(self.seed), commit)
+            fuzzer = Sp1BeakFuzzer(fuzzer_out, self.zkvm_dir, Random(self.seed), resolved)
 
             # For "all" we do a single loop-1 pass per snapshot (initial internal loop).
             # For a single commit, default to a single pass unless a timeout is explicitly set.
@@ -51,7 +55,7 @@ class SP1FuzzerClient(FuzzerClient):
         assert self.zkvm_dir, "no zkvm library"
         commits = _iter_supported_commits() if self.commit_or_branch == "all" else [self.commit_or_branch]
         for commit in commits:
-            install_sp1(self.zkvm_dir, commit)
+            install_sp1(self.zkvm_dir, resolve_sp1_commit(commit))
 
     def check(self):
         raise NotImplementedError("No bugs to check yet!")
