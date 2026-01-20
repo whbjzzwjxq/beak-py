@@ -31,7 +31,7 @@ def test_oracle_stress_performance_10000_calls(oracle, generator):
     Stress test: Run 100 oracle computations and measure total time.
     This demonstrates the speed of the pure Python MiniAssembler.
     """
-    iterations = 10
+    iterations = 1000
     num_insts_per_iter = 10
 
     print(f"\n[BENCHMARK] Starting {iterations} oracle calls...")

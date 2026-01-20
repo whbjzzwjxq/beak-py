@@ -1,7 +1,12 @@
 import re
 from dataclasses import dataclass, field
 from enum import Enum, auto
+import struct
 from typing import List, Dict, Optional
+
+# --- Memory Layout Constants ---
+DEFAULT_CODE_BASE = 0x1000  # Where code is loaded
+DEFAULT_DATA_BASE = 0x20000  # Safe region for memory ops
 
 
 class RV32Type(Enum):
@@ -176,11 +181,13 @@ class Instruction:
     imm: Optional[int] = None
 
     _asm: str = field(init=False, repr=False)
+    _binary: bytes = field(init=False, repr=False)
 
     def __post_init__(self):
-        self._asm = self._get_asm()
+        self._asm = self.__get_asm()
+        self._binary = self.__get_binary()
 
-    def _get_asm(self) -> str:
+    def __get_asm(self) -> str:
         template = self.mnemonic.assembly_template
         return template.format(
             mnemonic=self.mnemonic.literal,
@@ -189,6 +196,59 @@ class Instruction:
             rs2=self.rs2,
             imm=self.imm if self.imm is not None else 0,
         )
+
+    def __get_binary(self) -> bytes:
+        """Strict RV32IM binary encoder."""
+        m = self.mnemonic
+        fmt, op, f3, f7 = m.format, m.opcode, m.f3, m.f7
+        rd = self.rd or 0
+        rs1 = self.rs1 or 0
+        rs2 = self.rs2 or 0
+        imm = self.imm or 0
+
+        res = 0
+        if fmt == RV32Type.R:
+            res = (f7 << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op
+        elif fmt == RV32Type.I:
+            if m.literal in ("slli", "srli", "srai"):
+                res = (f7 << 25) | ((imm & 0x1F) << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op
+            else:
+                res = ((imm & 0xFFF) << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op
+        elif fmt == RV32Type.S:
+            res = (
+                (((imm >> 5) & 0x7F) << 25)
+                | (rs2 << 20)
+                | (rs1 << 15)
+                | (f3 << 12)
+                | ((imm & 0x1F) << 7)
+                | op
+            )
+        elif fmt == RV32Type.B:
+            res = (
+                (((imm >> 12) & 1) << 31)
+                | (((imm >> 5) & 0x3F) << 25)
+                | (rs2 << 20)
+                | (rs1 << 15)
+                | (f3 << 12)
+                | (((imm >> 1) & 0xF) << 8)
+                | (((imm >> 11) & 1) << 7)
+                | op
+            )
+        elif fmt == RV32Type.U:
+            res = ((imm & 0xFFFFF) << 12) | (rd << 7) | op
+        elif fmt == RV32Type.J:
+            res = (
+                (((imm >> 20) & 1) << 31)
+                | (((imm >> 1) & 0x3FF) << 21)
+                | (((imm >> 11) & 1) << 20)
+                | (((imm >> 12) & 0xFF) << 12)
+                | (rd << 7)
+                | op
+            )
+        elif fmt == RV32Type.SYSTEM:
+            res = (f7 << 20) | (f3 << 12) | op
+
+        return struct.pack("<I", res)
 
     @property
     def opcode(self) -> int:
@@ -209,6 +269,10 @@ class Instruction:
     @property
     def asm(self) -> str:
         return self._asm
+
+    @property
+    def binary(self) -> bytes:
+        return self._binary
 
     @staticmethod
     def from_asm(line: str) -> "Instruction":
@@ -243,7 +307,7 @@ class Instruction:
                     mnemonic, rd=r_idx(parts[1]), rs1=r_idx(parts[2]), rs2=r_idx(parts[3])
                 )
             if fmt == RV32Type.I:
-                if mnemonic is JALR or mnemonic in (LB, LH, LW, LBU, LHU):
+                if mnemonic.assembly_template == TEMPLATE_JALR_AND_LOAD:
                     return Instruction(
                         mnemonic, rd=r_idx(parts[1]), imm=imm_val(parts[2]), rs1=r_idx(parts[3])
                     )

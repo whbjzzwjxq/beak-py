@@ -3,6 +3,7 @@ from typing import Tuple
 from beak_core.rv32im import (
     AUIPC,
     BRANCH_INSTRUCTIONS,
+    DEFAULT_DATA_BASE,
     EBREAK,
     ECALL,
     I_TYPE_INSTRUCTIONS,
@@ -129,7 +130,7 @@ class RISCVGenerator:
         op = self.rng.choice(LOAD_INSTRUCTIONS + STORE_INSTRUCTIONS)
         rd_rs = self.rng.choice(self.safe_regs)
         base_reg = self.rng.choice([r for r in self.safe_regs if r != rd_rs])
-        safe_base_addr = 0x20000
+        safe_base_addr = DEFAULT_DATA_BASE
         offset = self._random_i12()
         if op.format == RV32Type.I:
             return (
