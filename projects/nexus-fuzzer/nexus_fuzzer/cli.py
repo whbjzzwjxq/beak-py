@@ -4,7 +4,11 @@ import logging
 from random import Random
 
 from nexus_fuzzer.fuzzer import NexusBeakFuzzer
-from nexus_fuzzer.settings import NEXUS_AVAILABLE_COMMITS_OR_BRANCHES
+from nexus_fuzzer.settings import (
+    NEXUS_AVAILABLE_COMMITS_OR_BRANCHES,
+    iter_nexus_snapshots,
+    resolve_nexus_commit,
+)
 from nexus_fuzzer.zkvm_repository.install import install_nexus
 from zkvm_fuzzer_utils.cli import FuzzerClient
 
@@ -12,7 +16,7 @@ logger = logging.getLogger("fuzzer")
 
 
 def _iter_supported_commits() -> list[str]:
-    return [c for c in NEXUS_AVAILABLE_COMMITS_OR_BRANCHES if c != "all"]
+    return iter_nexus_snapshots()
 
 
 class NexusFuzzerClient(FuzzerClient):
@@ -30,6 +34,7 @@ class NexusFuzzerClient(FuzzerClient):
         commits = _iter_supported_commits() if self.commit_or_branch == "all" else [self.commit_or_branch]
 
         for commit in commits:
+            commit = resolve_nexus_commit(commit)
             install_nexus(self.zkvm_dir, commit)
 
             fuzzer_out = self.out_dir / f"nexus-{commit[:7]}"
@@ -48,6 +53,7 @@ class NexusFuzzerClient(FuzzerClient):
         assert self.zkvm_dir, "no zkvm library"
         commits = _iter_supported_commits() if self.commit_or_branch == "all" else [self.commit_or_branch]
         for commit in commits:
+            commit = resolve_nexus_commit(commit)
             install_nexus(self.zkvm_dir, commit)
 
     def check(self):
@@ -64,4 +70,3 @@ def app():
 
 if __name__ == "__main__":
     app()
-

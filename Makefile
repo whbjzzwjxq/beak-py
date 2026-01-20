@@ -17,7 +17,7 @@ PYRIGHTCONFIG=$(ROOT)/pyrightconfig.json
 #                                Command Section                               #
 # ---------------------------------------------------------------------------- #
 
-.PHONY: check clean format install ship test venv install-openvm run-openvm-loop1 install-sp1 run-sp1-loop1 run-sp1-loop1-7f643da run-sp1-loop1-f3326e6 run-sp1-loop1-811a3f2 install-risc0 run-risc0-loop1 install-pico run-pico-loop1 install-jolt run-jolt-loop1 install-nexus run-nexus-loop1 \
+.PHONY: check clean format install ship test venv install-openvm run-openvm-loop1 run-openvm-loop1-regzero run-openvm-loop1-audit-336 run-openvm-loop1-audit-f038 install-sp1 run-sp1-loop1 run-sp1-loop1-7f643da run-sp1-loop1-f3326e6 run-sp1-loop1-811a3f2 install-risc0 run-risc0-loop1 install-pico run-pico-loop1 install-jolt run-jolt-loop1 install-nexus run-nexus-loop1 \
 	docker-build fuzz-start fuzz-stop fuzz-logs
 
 $(VIRTUALENV):
@@ -38,6 +38,15 @@ install-openvm: $(VIRTUALENV)
 
 run-openvm-loop1:
 	$(UV_RUN) openvm-fuzzer generate --seed 123 --out ./output --zkvm ./openvm-src
+
+run-openvm-loop1-regzero:
+	$(UV_RUN) openvm-fuzzer run --seed 123 --out ./output --zkvm ./openvm-src --commit-or-branch regzero
+
+run-openvm-loop1-audit-336:
+	$(UV_RUN) openvm-fuzzer run --seed 123 --out ./output --zkvm ./openvm-src --commit-or-branch audit-336
+
+run-openvm-loop1-audit-f038:
+	$(UV_RUN) openvm-fuzzer run --seed 123 --out ./output --zkvm ./openvm-src --commit-or-branch audit-f038
 
 install-sp1: $(VIRTUALENV)
 	uv sync --package sp1-fuzzer

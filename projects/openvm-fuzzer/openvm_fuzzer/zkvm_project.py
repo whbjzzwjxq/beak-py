@@ -1,8 +1,10 @@
 import io
+import os
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
 from beak_core.rv32im import FuzzingInstance
+from openvm_fuzzer.settings import OPENVM_REGZERO_COMMIT
 from zkvm_fuzzer_utils.file import create_file
 from zkvm_fuzzer_utils.project import AbstractProjectGenerator
 
@@ -101,37 +103,37 @@ class CircuitProjectGenerator(AbstractProjectGenerator):
         create_file(self.root / "Cargo.toml", content)
 
     def create_host_cargo_toml(self):
-        # We assume zkvm_path is provided relative to the workdir in templates
-        # but for robustness, let's pass it as is or handle it in the template
+        zkvm_relpath = os.path.relpath(self.zkvm_path, self.root / "host")
         content = self.render_template(
             "host_cargo.toml.j2",
             requires_fuzzer_utils=self.requires_fuzzer_utils,
-            zkvm_path="../../openvm-src", # Hardcode relative path for Docker consistency
-            openvm_stark_sdk_dep=get_openvm_stark_sdk_from_openvm_workspace_cargo_toml(
-                self.zkvm_path
-            ),
+            zkvm_path=zkvm_relpath,
         )
         create_file(self.root / "host" / "Cargo.toml", content)
 
     def create_host_main_rs(self):
         # Initial regs info for host to push into stdin
+        sanitized_regs = {k: (v & 0xFFFFFFFF) for k, v in self.instance.initial_regs.items()}
         content = self.render_template(
             "host_main.rs.j2",
             requires_fuzzer_utils=self.requires_fuzzer_utils,
             is_trace_collection=self.is_trace_collection,
             is_fault_injection=self.is_fault_injection,
-            initial_regs=self.instance.initial_regs,
+            initial_regs=sanitized_regs,
+            use_generic_sdk=(self.commit_or_branch == OPENVM_REGZERO_COMMIT),
         )
         create_file(self.root / "host" / "src" / "main.rs", content)
 
     def create_guest_cargo_toml(self):
-        content = self.render_template("guest_cargo.toml.j2", zkvm_path=self.zkvm_path)
+        zkvm_relpath = os.path.relpath(self.zkvm_path, self.root / "guest")
+        content = self.render_template("guest_cargo.toml.j2", zkvm_path=zkvm_relpath)
         create_file(self.root / "guest" / "Cargo.toml", content)
 
     def create_guest_main_rs(self):
         content = self.render_template(
             "guest_main.rs.j2",
-            instructions=self.instance.instructions,
+            instructions=[inst.asm for inst in self.instance.instructions],
             initial_regs=self.instance.initial_regs,
+            use_reveal_u32=(self.commit_or_branch == OPENVM_REGZERO_COMMIT),
         )
         create_file(self.root / "guest" / "src" / "main.rs", content)

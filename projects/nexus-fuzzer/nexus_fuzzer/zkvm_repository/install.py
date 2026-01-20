@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from nexus_fuzzer.settings import NEXUS_ZKVM_GIT_REPOSITORY
+from nexus_fuzzer.settings import NEXUS_ZKVM_GIT_REPOSITORY, resolve_nexus_commit
 from zkvm_fuzzer_utils.git import (
     GitException,
     git_checkout,
@@ -26,6 +26,8 @@ def install_nexus(
     if commit_or_branch == "all":
         raise RuntimeError("'all' is not a valid install target; pick a concrete commit")
 
+    commit_or_branch = resolve_nexus_commit(commit_or_branch)
+
     if not is_git_repository(nexus_install_path):
         logger.info(f"cloning nexus repo to {nexus_install_path}")
         git_clone_and_switch(nexus_install_path, NEXUS_ZKVM_GIT_REPOSITORY, commit_or_branch)
@@ -41,4 +43,3 @@ def install_nexus(
 
     if enable_zkvm_modification:
         raise RuntimeError("zkvm modification not wired for nexus in beak-fuzz yet")
-

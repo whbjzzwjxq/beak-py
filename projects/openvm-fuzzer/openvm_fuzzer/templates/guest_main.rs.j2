@@ -3,7 +3,11 @@
 #![allow(arithmetic_overflow)]
 #![no_main]
 
+{% if use_reveal_u32 %}
 use openvm::io::{read, reveal_u32};
+{% else %}
+use openvm::io::{read, reveal};
+{% endif %}
 use core::arch::asm;
 
 openvm::entry!(main);
@@ -36,17 +40,29 @@ pub fn main() {
             
             final_x0 = out(reg) final_x0,
             
-            options(nostack, nomem)
+            options(nostack)
         );
     }
 
     // 3. Reveal final results back to Host using stream 0
     {% for reg_idx in initial_regs.keys() %}
-    reveal_u32({{ reg_idx }}, 0); 
+    {% if use_reveal_u32 %}
+    reveal_u32({{ reg_idx }}, 0);
+    {% else %}
+    reveal({{ reg_idx }}, 0);
+    {% endif %}
     {% if reg_idx == 0 %}
+    {% if use_reveal_u32 %}
     reveal_u32(final_x0, 0);
     {% else %}
-    reveal_u32(x{{ reg_idx }}, 0); 
+    reveal(final_x0, 0);
+    {% endif %}
+    {% else %}
+    {% if use_reveal_u32 %}
+    reveal_u32(x{{ reg_idx }}, 0);
+    {% else %}
+    reveal(x{{ reg_idx }}, 0);
+    {% endif %}
     {% endif %}
     {% endfor %}
 }

@@ -4,9 +4,20 @@ from openvm_fuzzer.kinds import InjectionKind, InstrKind
 # ZKVM Specific Versions and URLs
 #
 
+OPENVM_REGZERO_COMMIT = "d7eab708f43487b2e7c00524ffd611f835e8e6b5"
+OPENVM_AUDIT_336_COMMIT = "336f1a475e5aa3513c4c5a266399f4128c119bba"
+OPENVM_AUDIT_F038_COMMIT = "f038f61d21db3aecd3029e1a23ba1ba0bb314800"
+
 OPENVM_AVAILABLE_COMMITS_OR_BRANCHES = [
+    "all",
     "main",
+    "regzero",
+    "audit-336",
+    "audit-f038",
     "ca36de3803213da664b03d111801ab903d55e360",
+    OPENVM_REGZERO_COMMIT,
+    OPENVM_AUDIT_336_COMMIT,
+    OPENVM_AUDIT_F038_COMMIT,
 ]
 OPENVM_ZKVM_GIT_REPOSITORY = "https://github.com/DanielHoffmann91/openvm.git"
 RUST_TOOLCHAIN_VERSION = "nightly-2025-02-14"
@@ -93,3 +104,17 @@ ENABLED_INJECTION_KINDS: list[InjectionKind] = [
 
 # NOTE: empty list disables preferences
 PREFERRED_INSTRUCTIONS: list[InstrKind] = []
+
+
+def resolve_openvm_commit(commit_or_branch: str) -> str:
+    if commit_or_branch == "regzero":
+        return OPENVM_REGZERO_COMMIT
+    if commit_or_branch == "audit-336":
+        return OPENVM_AUDIT_336_COMMIT
+    if commit_or_branch == "audit-f038":
+        return OPENVM_AUDIT_F038_COMMIT
+    return commit_or_branch
+
+
+def iter_openvm_snapshots() -> list[str]:
+    return ["regzero", "audit-336", "audit-f038"]

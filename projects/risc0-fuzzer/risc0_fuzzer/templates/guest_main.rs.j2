@@ -26,7 +26,7 @@ fn main() {
             inout("x{{ reg_idx }}") x{{ reg_idx }},
             {% endfor %}
             final_x0 = out(reg) final_x0,
-            options(nostack, nomem)
+            options(nostack)
         );
     }
 
@@ -43,4 +43,3 @@ fn main() {
     ];
     env::commit(&outputs);
 }
-

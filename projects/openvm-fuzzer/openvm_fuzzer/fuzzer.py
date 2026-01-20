@@ -8,7 +8,7 @@ from random import Random
 
 from beak_core.generator import RISCVGenerator
 from beak_core.oracle import RISCVOracle
-from beak_core.rv32im import FuzzingInstance
+from beak_core.rv32im import DEFAULT_DATA_BASE, FuzzingInstance
 
 from openvm_fuzzer.kinds import InjectionKind, InstrKind
 from openvm_fuzzer.settings import (
@@ -70,6 +70,19 @@ class BeakFuzzer(FuzzerCore[InstrKind, InjectionKind]):
             # 2. Generate a new sequence
             num_insts = self.random.randint(1, 8)
             self.instance = self.generator.generate_instance(num_insts=num_insts)
+            # Ensure load/store bases are mapped to the safe data region.
+            for inst in self.instance.instructions:
+                if inst.mnemonic.literal in {
+                    "lb",
+                    "lh",
+                    "lw",
+                    "lbu",
+                    "lhu",
+                    "sb",
+                    "sh",
+                    "sw",
+                } and inst.rs1 is not None:
+                    self.instance.initial_regs[inst.rs1] = DEFAULT_DATA_BASE
             logger.info(f"Iteration {self.run_id}: Generated {num_insts} instructions.")
             
             # 3. Compute Ground Truth (Oracle)

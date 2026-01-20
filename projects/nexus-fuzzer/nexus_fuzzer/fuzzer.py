@@ -6,7 +6,7 @@ from random import Random
 
 from beak_core.generator import RISCVGenerator
 from beak_core.oracle import RISCVOracle
-from beak_core.rv32im import FuzzingInstance
+from beak_core.rv32im import DEFAULT_DATA_BASE, FuzzingInstance
 from nexus_fuzzer.kinds import InjectionKind, InstrKind
 from nexus_fuzzer.settings import TIMEOUT_PER_BUILD, TIMEOUT_PER_RUN
 from nexus_fuzzer.zkvm_project import InstructionProjectGenerator
@@ -67,18 +67,23 @@ class NexusBeakFuzzer(FuzzerCore[InstrKind, InjectionKind]):
                 "bgeu",
                 "jal",
                 "jalr",
-                "lb",
-                "lh",
-                "lw",
-                "lbu",
-                "lhu",
-                "sb",
-                "sh",
-                "sw",
             }
             for _ in range(50):
                 candidate = self.generator.generate_instance(num_insts=num_insts)
                 if all(inst.mnemonic.literal not in denied_mnemonics for inst in candidate.instructions):
+                    # Ensure load/store bases are mapped to the safe data region.
+                    for inst in candidate.instructions:
+                        if inst.mnemonic.literal in {
+                            "lb",
+                            "lh",
+                            "lw",
+                            "lbu",
+                            "lhu",
+                            "sb",
+                            "sh",
+                            "sw",
+                        } and inst.rs1 is not None:
+                            candidate.initial_regs[inst.rs1] = DEFAULT_DATA_BASE
                     self.instance = candidate
                     break
             else:

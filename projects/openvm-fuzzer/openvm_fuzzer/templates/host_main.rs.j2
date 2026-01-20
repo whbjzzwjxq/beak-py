@@ -5,10 +5,13 @@ use std::sync::Arc;
 
 use openvm_build::GuestOptions;
 use openvm_sdk::{
-    config::{AppConfig, SdkVmConfig},
+    config::{AppConfig, AppFriParams, SdkVmConfig},
     Sdk, StdIn,
 };
-use openvm_stark_sdk::config::FriParameters;
+{% if use_generic_sdk %}
+use openvm_sdk::config::TranspilerConfig;
+use openvm_sdk::prover::verify_app_proof;
+{% endif %}
 
 use clap::Parser;
 use std::time::Instant;
@@ -69,19 +72,28 @@ fn main() {
        .io(Default::default())
        .build();
 
-    let sdk = Sdk::new();
+    let app_fri_params = AppFriParams::default().fri_params;
+
+    {% if use_generic_sdk %}
+    let app_config = AppConfig::new(app_fri_params.clone(), vm_config.clone());
+    let sdk = Sdk::new(app_config).expect("sdk init");
+    {% else %}
+    let sdk = Sdk;
+    {% endif %}
 
     let guest_opts = GuestOptions::default();
     let target_path = "guest";
-    let elf = sdk.build(
-        guest_opts,
-        &vm_config,
-        target_path,
-        &Default::default(),
-        None // If None, "openvm-init.rs" is used
-    ).expect("guest build");
-
+    {% if use_generic_sdk %}
+    let elf = sdk
+        .build(guest_opts, target_path, &Default::default(), None)
+        .expect("guest build");
+    let exe = sdk.convert_to_exe(elf).expect("guest transpile");
+    {% else %}
+    let elf = sdk
+        .build(guest_opts, target_path, &Default::default())
+        .expect("guest build");
     let exe = sdk.transpile(elf, vm_config.transpiler()).expect("guest transpile");
+    {% endif %}
 
     let mut stdin = StdIn::default();
 
@@ -90,13 +102,15 @@ fn main() {
     stdin.write(&{{ val }}u32);
     {% endfor %}
 
-    let app_log_blowup = 2;
-    let app_fri_params = FriParameters::standard_with_100_bits_conjectured_security(app_log_blowup);
-    let app_config = AppConfig::new(app_fri_params, vm_config);
-
+    {% if use_generic_sdk %}
+    let mut app_prover = sdk.app_prover(exe.clone()).expect("app prover");
+    let app_commit = app_prover.app_commit();
+    let (_app_pk, app_vk) = sdk.app_keygen();
+    {% else %}
+    let app_config = AppConfig::new(app_fri_params.clone(), vm_config);
     let app_committed_exe = sdk.commit_app_exe(app_fri_params, exe).expect("commit app exe");
-
     let app_pk = Arc::new(sdk.app_keygen(app_config).expect("app keygen"));
+    {% endif %}
 
     println!(
         "<record>{{ '{{' }}\
@@ -115,11 +129,15 @@ fn main() {
     );
     let timer = Instant::now();
 
+    {% if use_generic_sdk %}
+    let proof = app_prover.prove(stdin.clone()).expect("prove");
+    {% else %}
     let proof = sdk.generate_app_proof(
         app_pk.clone(),
         app_committed_exe.clone(),
         stdin.clone()
     ).expect("prove");
+    {% endif %}
 
     println!(
         "<record>{{ '{{' }}\
@@ -144,8 +162,15 @@ fn main() {
     );
     let timer = Instant::now();
 
+    {% if use_generic_sdk %}
+    let verified = verify_app_proof(&app_vk, &proof).expect("verify");
+    if verified.app_exe_commit != app_commit.app_exe_commit {
+        panic!("app exe commit mismatch");
+    }
+    {% else %}
     let app_vk = app_pk.get_app_vk();
     sdk.verify_app_proof(&app_vk, &proof).expect("verify");
+    {% endif %}
 
     println!(
         "<record>{{ '{{' }}\
