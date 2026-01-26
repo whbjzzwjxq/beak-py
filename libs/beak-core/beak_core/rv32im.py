@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass, field
-from enum import Enum, auto
+from enum import Enum
 import struct
 from typing import List, Dict, Optional
 
@@ -9,14 +9,31 @@ DEFAULT_CODE_BASE = 0x1000  # Where code is loaded
 DEFAULT_DATA_BASE = 0x20000  # Safe region for memory ops
 
 
-class RV32Type(Enum):
-    R = auto()
-    I = auto()
-    S = auto()
-    B = auto()
-    U = auto()
-    J = auto()
-    SYSTEM = auto()
+class RV32Type(str, Enum):
+    R = "r"
+    I = "i"
+    S = "s"
+    B = "b"
+    U = "u"
+    J = "j"
+    SYSTEM = "system"
+
+
+class RV32Trap(str, Enum):
+    INSTRUCTION_ADDRESS_MISALIGNED = "instruction_address_misaligned"
+    INSTRUCTION_ACCESS_FAULT = "instruction_access_fault"
+    ILLEGAL_INSTRUCTION = "illegal_instruction"
+    BREAKPOINT = "breakpoint"
+    LOAD_ADDRESS_MISALIGNED = "load_address_misaligned"
+    LOAD_ACCESS_FAULT = "load_access_fault"
+    STORE_ADDRESS_MISALIGNED = "store_address_misaligned"
+    STORE_ACCESS_FAULT = "store_access_fault"
+    ENV_CALL_FROM_UMODE = "env_call_from_umode"
+    ENV_CALL_FROM_SMODE = "env_call_from_smode"
+    ENV_CALL_FROM_MMODE = "env_call_from_mmode"
+    INSTRUCTION_PAGE_FAULT = "instruction_page_fault"
+    LOAD_PAGE_FAULT = "load_page_fault"
+    STORE_PAGE_FAULT = "store_page_fault"
 
 
 # --- Assembly Templates ---
