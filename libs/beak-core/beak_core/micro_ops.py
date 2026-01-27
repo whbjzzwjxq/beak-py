@@ -27,6 +27,32 @@ class InteractionType(str, Enum):
     RECV = "recv"
 
 
+class InteractionScope(str, Enum):
+    # the balancing domain this interaction belongs to.
+    # local means it is balanced within a private permutation/logup domain.
+    # global means it is balanced via a global ledger/table and often anchored to a public digest/sum.
+    LOCAL = "local"
+    GLOBAL = "global"
+
+
+class InteractionKind(str, Enum):
+    # coarse interaction kind. use table_id (and/or payload_schema) for vm-specific sub-kinds.
+    MEMORY = "memory"
+    PROGRAM = "program"
+    INSTRUCTION = "instruction"
+    ALU = "alu"
+    BYTE = "byte"
+    RANGE = "range"
+    FIELD = "field"
+    SYSCALL = "syscall"
+    GLOBAL = "global"
+    POSEIDON2 = "poseidon2"
+    BITWISE = "bitwise"
+    KECCAK = "keccak"
+    SHA256 = "sha256"
+    CUSTOM = "custom"
+
+
 class MemorySpace(str, Enum):
     RAM = "ram"
     REG = "reg"
@@ -160,14 +186,46 @@ class MemoryWrite(MicroOpBase):
 class Interaction(MicroOpBase):
     table_id: str
     io: InteractionType
+    # the balancing domain this interaction belongs to.
+    scope: Optional[InteractionScope] = None
     event_idx: Optional[int] = None
+    # payload is stored as a positional list; payload_schema provides names for each position.
     payload: List[FieldElement] = field(default_factory=list)
-    type_tag: Optional[str] = None
-    multiplicity: Optional[int] = None
+    payload_schema: Optional[List[str]] = None
+    # the interaction kind (coarse, cross-vm). use table_id for sub-kinds.
+    kind: Optional[InteractionKind] = None
+    # the interaction multiplicity (count/weight) used by the balancing argument.
+    multiplicity: Optional[FieldElement] = None
 
     def __post_init__(self):
         if not isinstance(self.io, InteractionType):
             raise ValueError(f"Interaction io {self.io} invalid")
+        if self.scope is not None and not isinstance(self.scope, InteractionScope):
+            raise ValueError(f"Interaction scope {self.scope} invalid")
+        if self.kind is not None and not isinstance(self.kind, InteractionKind):
+            # Allow callers/serializers to pass raw strings.
+            self.kind = InteractionKind(str(self.kind))
+        if self.payload_schema is not None and len(self.payload_schema) != len(self.payload):
+            raise ValueError(
+                "Interaction payload_schema length must match payload length "
+                f"(schema={len(self.payload_schema)} payload={len(self.payload)})"
+            )
+
+    def payload_value(self, name: str) -> Optional[FieldElement]:
+        """Return a payload field by name if payload_schema is present; otherwise None."""
+        if self.payload_schema is None:
+            return None
+        try:
+            idx = self.payload_schema.index(name)
+        except ValueError:
+            return None
+        return self.payload[idx]
+
+    def payload_as_dict(self) -> Optional[Dict[str, FieldElement]]:
+        """Return a named view of payload if payload_schema is present; otherwise None."""
+        if self.payload_schema is None:
+            return None
+        return dict(zip(self.payload_schema, self.payload))
 
 
 MicroOp = Union[Step, RegisterRead, RegisterWrite, MemoryRead, MemoryWrite, Interaction]
