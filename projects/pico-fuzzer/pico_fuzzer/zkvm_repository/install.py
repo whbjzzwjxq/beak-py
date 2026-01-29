@@ -6,6 +6,7 @@ from pico_fuzzer.settings import (
     PICO_ZKVM_GIT_REPOSITORY,
     RUST_TOOLCHAIN_VERSION,
 )
+from pico_fuzzer.zkvm_repository.injection import pico_bool_domain_is_real_fault_injection
 from zkvm_fuzzer_utils.cmd import invoke_command
 from zkvm_fuzzer_utils.file import path_to_binary, replace_in_file
 from zkvm_fuzzer_utils.git import (
@@ -54,7 +55,8 @@ def install_pico(
             git_checkout(pico_install_path, commit_or_branch)
 
     if enable_zkvm_modification:
-        raise PicoManagerException("zkvm modification not wired for pico in beak-fuzz yet")
+        logger.info("applying pico zkvm modifications (fault injection hooks)")
+        pico_bool_domain_is_real_fault_injection(pico_install_path)
 
     # Pico currently enables a `strict` feature by default in `pico-vm`, which promotes warnings
     # (including deprecations from transitive deps) to hard errors. For fuzzing, prefer a buildable

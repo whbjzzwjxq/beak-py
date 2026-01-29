@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-from beak_core.micro_ops import ZKVMTrace
+from beak_core.micro_ops import PossibleFieldElement, ZKVMTrace
 
 
 class BucketType(str, Enum):
@@ -144,12 +144,12 @@ class InertWhenNotRealBucket(Bucket):
 
     def repair(self, key: BucketKey) -> Optional[Dict[str, Any]]:
         label = key.label[0]
-        # 如果目标是触发 violation，我们就构造冲突
+        # If the target is a violation, construct a conflicting side effect.
         if label == InertWhenNotRealBoundary.REGW:
             return {
                 "action": "inject_uop",
                 "uop_type": "RegisterWrite",
-                "constraint": {"is_real": 0},  # 在 is_real=0 的行注入
+                "constraint": {"is_real": 0},  # inject into rows with is_real=0
             }
         if label == InertWhenNotRealBoundary.MEMW:
             return {"action": "inject_uop", "uop_type": "MemoryWrite", "constraint": {"is_real": 0}}
@@ -158,5 +158,118 @@ class InertWhenNotRealBucket(Bucket):
         return None
 
     def fallback(self, key: BucketKey) -> Optional[Dict[str, Any]]:
-        # 如果不知道怎么修，就随机翻转 is_real 信号
+        # If we don't know how to fix it, try randomly flipping the is_real signal.
         return {"action": "random_flip", "field": "meta.is_real"}
+
+
+class BoolDomainSignal(str, Enum):
+    IS_REAL = "meta.is_real"
+    IS_VALID = "meta.is_valid"
+
+
+class BoolDomainStatus(str, Enum):
+    BOOLEAN = "boolean"
+    NON_BOOLEAN = "non_boolean"
+
+
+def _is_bool_like(value: PossibleFieldElement | None) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, int):
+        return value in (0, 1)
+    if isinstance(value, str):
+        # Allow simple serialization forms.
+        if value.strip() in ("0", "1"):
+            return True
+        return False
+    return False
+
+
+class BoolDomainBucket(Bucket):
+    """
+    Detects whether boolean-like meta signals (e.g. `is_real`) are constrained to {0,1}.
+
+    This is a high-level, cross-zkVM bucket: backends can map "meta.is_real" to their
+    concrete columns/flags (e.g. Pico's MemoryLocalChip.is_real multiplicity).
+    """
+
+    def get_type(self) -> BucketType:
+        return BucketType.BOOL_DOMAIN
+
+    def universe(self) -> Iterable[BucketKey]:
+        for signal in BoolDomainSignal:
+            for status in BoolDomainStatus:
+                yield BucketKey(self.get_type(), (signal.value, status.value))
+
+    def features(self, trace: ZKVMTrace) -> List[BucketHit]:
+        """
+        Scan boolean-like meta signals across *all* micro-ops in each step.
+
+        Rationale: different backends attach `is_real`/`is_valid` to different uops
+        (instruction step, memory access row, interaction row, ...). For the closed-loop pipeline we want
+        this bucket to be backend-agnostic, so we don't assume the signal only lives
+        on the main `Step` object.
+        """
+
+        hits: List[BucketHit] = []
+        for s_idx in trace.micro_ops_by_step.keys():
+            for uop in trace.get_micro_ops_in_step(s_idx):
+                for signal in (BoolDomainSignal.IS_REAL, BoolDomainSignal.IS_VALID):
+                    raw = None
+                    if signal == BoolDomainSignal.IS_REAL:
+                        raw = uop.meta.is_real
+                    elif signal == BoolDomainSignal.IS_VALID:
+                        raw = uop.meta.is_valid
+
+                    is_bool = _is_bool_like(raw)
+                    if is_bool is None:
+                        continue  # signal not available
+
+                    status = BoolDomainStatus.BOOLEAN if is_bool else BoolDomainStatus.NON_BOOLEAN
+                    hits.append(
+                        BucketHit(
+                            key=BucketKey(self.get_type(), (signal.value, status.value)),
+                            step_idx=s_idx,
+                            details={
+                                "value": raw,
+                                "uop_type": type(uop).__name__,
+                                "uop_idx": getattr(uop, "uop_idx", None),
+                            },
+                        )
+                    )
+        return hits
+
+    def explain(self, hit: BucketHit) -> str:
+        signal, status = hit.key.label
+        if status == BoolDomainStatus.BOOLEAN.value:
+            return f"Step {hit.step_idx}: {signal} is boolean"
+        return f"Step {hit.step_idx}: {signal} is non-boolean (value={hit.details.get('value')})"
+
+    def repair(self, key: BucketKey) -> Optional[Dict[str, Any]]:
+        signal, status = key.label
+        if status != BoolDomainStatus.NON_BOOLEAN.value:
+            return None
+        if signal == BoolDomainSignal.IS_REAL.value:
+            # Minimal payload used by backends: make `is_real` non-boolean (e.g. 2).
+            return {
+                "action": "set_non_bool",
+                "field": "is_real",
+                "value": 2,
+            }
+        if signal == BoolDomainSignal.IS_VALID.value:
+            return {
+                "action": "set_non_bool",
+                "field": "is_valid",
+                "value": 2,
+            }
+        return None
+
+    def fallback(self, key: BucketKey) -> Optional[Dict[str, Any]]:
+        signal, _ = key.label
+        if signal == BoolDomainSignal.IS_REAL.value:
+            return {"action": "random_flip", "field": "meta.is_real"}
+        if signal == BoolDomainSignal.IS_VALID.value:
+            return {"action": "random_flip", "field": "meta.is_valid"}
+        return None
