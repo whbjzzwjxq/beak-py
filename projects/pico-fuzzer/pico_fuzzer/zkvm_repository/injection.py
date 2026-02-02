@@ -15,7 +15,7 @@ def pico_bool_domain_is_real_fault_injection(pico_install_path: Path) -> None:
     kept honest (0/1) and used for lookups/interactions. This allows beak-fuzz to
     test whether the original `is_real` is only constrained via lookup coupling.
 
-    This is meant to exercise the `bool_domain` bucket (Pico-IsReal-01 in beak-scopes).
+    This is meant to exercise the `multiplicity_bool_domain` bucket (Pico-IsReal-01 in beak-scopes).
 
     Control via env vars (read during proving):
       - BEAK_PICO_INJECT_BOOL_DOMAIN_IS_REAL=1
@@ -92,7 +92,7 @@ def pico_bool_domain_is_real_fault_injection(pico_install_path: Path) -> None:
     )
     injection_prelude = r"""\1
 
-        // --- beak-fuzz fault injection (bool_domain / Pico-IsReal-01) ---
+        // --- beak-fuzz fault injection (multiplicity_bool_domain / Pico-IsReal-01) ---
         // Allow setting MemoryLocalChip's `is_real` to a non-boolean value (e.g. 2) on a chosen
         // local memory event. This intentionally models an under-constrained boolean domain.
         let beak_inject_enabled = std::env::var("BEAK_PICO_INJECT_BOOL_DOMAIN_IS_REAL")
@@ -172,4 +172,4 @@ def pico_bool_domain_is_real_fault_injection(pico_install_path: Path) -> None:
                 "Upstream file likely changed."
             )
 
-    logger.info("applied pico bool_domain/is_real fault injection patch")
+    logger.info("applied pico multiplicity_bool_domain/is_real fault injection patch")

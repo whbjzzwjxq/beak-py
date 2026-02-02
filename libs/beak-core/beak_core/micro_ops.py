@@ -1,11 +1,8 @@
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Sequence
 
 from enum import Enum
-
-from beak_core.rv32im import Instruction, RV32Mnemonic, RV32Trap
-
 
 FieldElement = int
 
@@ -13,13 +10,7 @@ PossibleBooleanElement = FieldElement
 
 PossibleFieldElement = FieldElement | str
 
-
-class Subdomain(str, Enum):
-    CPU = "cpu"
-    SYSCALL = "syscall"
-    PADDING = "padding"
-    MEMORY = "memory"
-    INTERACTION = "interaction"
+GateValue = int | str
 
 
 class InteractionType(str, Enum):
@@ -65,138 +56,70 @@ class MemorySize(str, Enum):
     HALF_WORD = "half_word"
     WORD = "word"
 
-
-@dataclass
-class ZKVMMeta:
-
-    # In ZKVMMeta, Optional means this field is not available in the original ZKVM.
-    # is_real means whether this micro-op is padded or not.
-    is_real: Optional[PossibleBooleanElement] = None
-
-    # is_valid means whether this micro-op is valid or not.
-    is_valid: Optional[PossibleBooleanElement] = None
-
-    # subdomain: cpu/syscall/padding/memory/...
-    subdomain: Optional[Subdomain] = None
-
-    # extensible selectors: send_to_table, is_memory, mem_space, kind, mult, ...
-    selectors: Dict[str, PossibleFieldElement] = field(default_factory=dict)
-
-    # the bucket of this micro-op.
-    bucket: Optional[str] = None
-
-
-@dataclass(kw_only=True)
-class MicroOpBase:
-    # the idx of step in the program this micro-op belongs to.
-    # dynamic execution index (clk), monotonically increasing.
-    # it is cross-segment monotonic.
-    step_idx: int
-
-    # the idx of this micro-op in the step.
-    # For the step itself, it is 0.
-    uop_idx: int
-
-    # the timestamp of this micro-op.
-    timestamp: Optional[int] = None
-
-    # the segment_idx of this micro-op belongs to.
-    segment_idx: Optional[int] = None
-
-    # the idx of this micro-op in the segment.
-    segment_step_idx: Optional[int] = None
-
-    # the meta of this micro-op.
-    meta: ZKVMMeta = field(default_factory=ZKVMMeta)
+    @property
+    def byte_len(self) -> int:
+        if self == MemorySize.BYTE:
+            return 1
+        if self == MemorySize.HALF_WORD:
+            return 2
+        return 4
 
 
 @dataclass
-class Step(MicroOpBase):
+class ChipRow:
+    """
+    A first-class "row semantics" object.
 
-    # the opcode of this step, refer to rv32im.py.
-    opcode: RV32Mnemonic
+    This represents a single row in a zkVM AIR/chip trace, including its gating
+    signals and any row-local values you want to expose to buckets/injections.
 
-    # the pc of this step.
-    pc: int
+    ChipRow is intentionally *not* an Interaction: interactions are sent/recv
+    messages used for cross-table balancing, while ChipRow captures per-chip
+    row semantics (selectors, is_real, enabled, ...).
+    """
 
-    # the instruction of this step.
-    instruction: Instruction
-
-    # the idx of this instruction in the step.
-    instruction_idx: int
-
-    # the next pc of this step.
-    next_pc: Optional[int] = None
-
-    # the reason why this step entered a trap.
-    trap: Optional[RV32Trap] = None
-
-    # whether this step is halted.
-    halted: Optional[bool] = None
+    row_id: str
+    domain: str
+    chip: str
+    gates: Dict[str, GateValue] = field(default_factory=dict)
+    locals: Dict[str, PossibleFieldElement] = field(default_factory=dict)
+    event_id: Optional[str] = None
 
 
-@dataclass
-class RegisterRead(MicroOpBase):
-    reg: int
-    value: int
+def _encode_memory_space(space: MemorySpace) -> int:
+    return {
+        MemorySpace.RAM: 0,
+        MemorySpace.REG: 1,
+        MemorySpace.VOLATILE: 2,
+        MemorySpace.IO: 3,
+    }[space]
 
-    def __post_init__(self):
-        if not (0 <= self.reg <= 31):
-            raise ValueError(f"RegisterRead reg {self.reg} out of range [0, 31]")
 
-
-@dataclass
-class RegisterWrite(MicroOpBase):
-    reg: int
-    value: int
-    wen: Optional[PossibleBooleanElement] = None
-
-    def __post_init__(self):
-        if not (0 <= self.reg <= 31):
-            raise ValueError(f"RegisterWrite reg {self.reg} out of range [0, 31]")
+def _encode_interaction_kind(kind: InteractionKind) -> int:
+    # Stable tags for (coarse, cross-vm) kinds.
+    order = list(InteractionKind)
+    return order.index(kind)
 
 
 @dataclass
-class MemoryRead(MicroOpBase):
-    space: MemorySpace
-    addr: int
-    size: MemorySize
-    value: FieldElement
+class InteractionBase:
+    """
+    Interaction micro-op: the only micro-op type we keep.
 
-    def __post_init__(self):
-        if not isinstance(self.space, MemorySpace):
-            raise ValueError(f"MemoryRead space {self.space} invalid")
-        if not isinstance(self.size, MemorySize):
-            raise ValueError(f"MemoryRead size {self.size} invalid")
+    An interaction represents a single send/recv message to a balancing argument
+    (permutation / logup / sumcheck-like accumulator). Payload is kind-specific.
+    """
 
-
-@dataclass
-class MemoryWrite(MicroOpBase):
-    space: MemorySpace
-    addr: int
-    size: MemorySize
-    value: FieldElement
-    wen: Optional[PossibleBooleanElement] = None
-
-    def __post_init__(self):
-        if not isinstance(self.space, MemorySpace):
-            raise ValueError(f"MemoryWrite space {self.space} invalid")
-        if not isinstance(self.size, MemorySize):
-            raise ValueError(f"MemoryWrite size {self.size} invalid")
-
-
-@dataclass
-class Interaction(MicroOpBase):
     table_id: str
     io: InteractionType
     # the balancing domain this interaction belongs to.
     scope: Optional[InteractionScope] = None
-    event_idx: Optional[int] = None
-    # payload is stored as a positional list; payload_schema provides names for each position.
-    payload: List[FieldElement] = field(default_factory=list)
-    payload_schema: Optional[List[str]] = None
+    # optional linkage to a specific chip row that "emits" this interaction.
+    anchor_row_id: Optional[str] = None
+    # optional cross-table event identifier (join key).
+    event_id: Optional[str] = None
     # the interaction kind (coarse, cross-vm). use table_id for sub-kinds.
-    kind: Optional[InteractionKind] = None
+    kind: InteractionKind = InteractionKind.CUSTOM
     # the interaction multiplicity (count/weight) used by the balancing argument.
     multiplicity: Optional[FieldElement] = None
 
@@ -205,98 +128,321 @@ class Interaction(MicroOpBase):
             raise ValueError(f"Interaction io {self.io} invalid")
         if self.scope is not None and not isinstance(self.scope, InteractionScope):
             raise ValueError(f"Interaction scope {self.scope} invalid")
-        if self.kind is not None and not isinstance(self.kind, InteractionKind):
+        if not isinstance(self.kind, InteractionKind):
             # Allow callers/serializers to pass raw strings.
             self.kind = InteractionKind(str(self.kind))
-        if self.payload_schema is not None and len(self.payload_schema) != len(self.payload):
-            raise ValueError(
-                "Interaction payload_schema length must match payload length "
-                f"(schema={len(self.payload_schema)} payload={len(self.payload)})"
-            )
+
+    def payload_schema(self) -> List[str]:
+        return []
+
+    def payload(self) -> List[FieldElement]:
+        return []
 
     def payload_value(self, name: str) -> Optional[FieldElement]:
-        """Return a payload field by name if payload_schema is present; otherwise None."""
-        if self.payload_schema is None:
+        schema = self.payload_schema()
+        if not schema:
             return None
         try:
-            idx = self.payload_schema.index(name)
+            idx = schema.index(name)
         except ValueError:
             return None
-        return self.payload[idx]
-
-    def payload_as_dict(self) -> Optional[Dict[str, FieldElement]]:
-        """Return a named view of payload if payload_schema is present; otherwise None."""
-        if self.payload_schema is None:
+        payload = self.payload()
+        if idx >= len(payload):
             return None
-        return dict(zip(self.payload_schema, self.payload))
+        return payload[idx]
+
+    def payload_as_dict(self) -> Dict[str, FieldElement]:
+        schema = self.payload_schema()
+        payload = self.payload()
+        if not schema:
+            return {}
+        return dict(zip(schema, payload))
 
 
-MicroOp = Union[Step, RegisterRead, RegisterWrite, MemoryRead, MemoryWrite, Interaction]
+@dataclass
+class MemoryInteraction(InteractionBase):
+    """
+    Memory-like interaction (includes RAM/REG/IO spaces).
+
+    Payload is a fixed schema so that it depends only on InteractionKind.MEMORY.
+    """
+
+    kind: InteractionKind = InteractionKind.MEMORY
+    space: MemorySpace = MemorySpace.RAM
+    addr: int = 0
+    size: MemorySize = MemorySize.WORD
+    value: FieldElement = 0
+    is_write: PossibleBooleanElement = 0
+    wen: Optional[PossibleBooleanElement] = None
+
+    def payload_schema(self) -> List[str]:
+        return ["space", "addr", "size_bytes", "value", "is_write", "wen"]
+
+    def payload(self) -> List[FieldElement]:
+        return [
+            _encode_memory_space(self.space),
+            int(self.addr),
+            int(self.size.byte_len),
+            int(self.value),
+            int(self.is_write),
+            int(self.wen) if self.wen is not None else 1,
+        ]
+
+
+@dataclass
+class ProgramInteraction(InteractionBase):
+    """
+    Program / instruction-stream interaction.
+
+    Use this for "program table" style arguments (PC, instruction word, next PC).
+    """
+
+    kind: InteractionKind = InteractionKind.PROGRAM
+    pc: int = 0
+    inst_word: int = 0
+    next_pc: int = 0
+
+    def payload_schema(self) -> List[str]:
+        return ["pc", "inst_word", "next_pc"]
+
+    def payload(self) -> List[FieldElement]:
+        return [int(self.pc), int(self.inst_word), int(self.next_pc)]
+
+
+@dataclass
+class InstructionInteraction(InteractionBase):
+    """
+    Decoded-instruction interaction (opcode + operands), when the backend has one.
+    """
+
+    kind: InteractionKind = InteractionKind.INSTRUCTION
+    opcode: int = 0
+    rd: int = 0
+    rs1: int = 0
+    rs2: int = 0
+    imm: int = 0
+
+    def payload_schema(self) -> List[str]:
+        return ["opcode", "rd", "rs1", "rs2", "imm"]
+
+    def payload(self) -> List[FieldElement]:
+        return [int(self.opcode), int(self.rd), int(self.rs1), int(self.rs2), int(self.imm)]
+
+
+@dataclass
+class AluInteraction(InteractionBase):
+    kind: InteractionKind = InteractionKind.ALU
+    op: int = 0
+    a: FieldElement = 0
+    b: FieldElement = 0
+    out: FieldElement = 0
+
+    def payload_schema(self) -> List[str]:
+        return ["op", "a", "b", "out"]
+
+    def payload(self) -> List[FieldElement]:
+        return [int(self.op), int(self.a), int(self.b), int(self.out)]
+
+
+@dataclass
+class ByteInteraction(InteractionBase):
+    kind: InteractionKind = InteractionKind.BYTE
+    value: FieldElement = 0
+
+    def payload_schema(self) -> List[str]:
+        return ["value"]
+
+    def payload(self) -> List[FieldElement]:
+        return [int(self.value)]
+
+
+@dataclass
+class RangeInteraction(InteractionBase):
+    kind: InteractionKind = InteractionKind.RANGE
+    value: FieldElement = 0
+    bits: int = 0
+
+    def payload_schema(self) -> List[str]:
+        return ["value", "bits"]
+
+    def payload(self) -> List[FieldElement]:
+        return [int(self.value), int(self.bits)]
+
+
+@dataclass
+class FieldInteraction(InteractionBase):
+    kind: InteractionKind = InteractionKind.FIELD
+    value: FieldElement = 0
+
+    def payload_schema(self) -> List[str]:
+        return ["value"]
+
+    def payload(self) -> List[FieldElement]:
+        return [int(self.value)]
+
+
+@dataclass
+class SyscallInteraction(InteractionBase):
+    kind: InteractionKind = InteractionKind.SYSCALL
+    syscall_id: int = 0
+    arg0: FieldElement = 0
+    arg1: FieldElement = 0
+    arg2: FieldElement = 0
+    arg3: FieldElement = 0
+    ret0: FieldElement = 0
+
+    def payload_schema(self) -> List[str]:
+        return ["syscall_id", "arg0", "arg1", "arg2", "arg3", "ret0"]
+
+    def payload(self) -> List[FieldElement]:
+        return [
+            int(self.syscall_id),
+            int(self.arg0),
+            int(self.arg1),
+            int(self.arg2),
+            int(self.arg3),
+            int(self.ret0),
+        ]
+
+
+@dataclass
+class GlobalInteraction(InteractionBase):
+    kind: InteractionKind = InteractionKind.GLOBAL
+    # Backends often include the local kind in the global message to avoid collisions.
+    local_kind: InteractionKind = InteractionKind.CUSTOM
+    digest_lo: FieldElement = 0
+    digest_hi: FieldElement = 0
+
+    def payload_schema(self) -> List[str]:
+        return ["local_kind", "digest_lo", "digest_hi"]
+
+    def payload(self) -> List[FieldElement]:
+        return [int(_encode_interaction_kind(self.local_kind)), int(self.digest_lo), int(self.digest_hi)]
+
+
+@dataclass
+class BitwiseInteraction(InteractionBase):
+    kind: InteractionKind = InteractionKind.BITWISE
+    op: int = 0
+    a: FieldElement = 0
+    b: FieldElement = 0
+    out: FieldElement = 0
+
+    def payload_schema(self) -> List[str]:
+        return ["op", "a", "b", "out"]
+
+    def payload(self) -> List[FieldElement]:
+        return [int(self.op), int(self.a), int(self.b), int(self.out)]
+
+
+@dataclass
+class HashInteraction(InteractionBase):
+    """
+    Common payload shape for hash-like chips.
+
+    This is used for POSEIDON2 / KECCAK / SHA256 kinds.
+    """
+
+    block_idx: int = 0
+    in_lo: FieldElement = 0
+    in_hi: FieldElement = 0
+    out_lo: FieldElement = 0
+    out_hi: FieldElement = 0
+
+    def payload_schema(self) -> List[str]:
+        return ["block_idx", "in_lo", "in_hi", "out_lo", "out_hi"]
+
+    def payload(self) -> List[FieldElement]:
+        return [int(self.block_idx), int(self.in_lo), int(self.in_hi), int(self.out_lo), int(self.out_hi)]
+
+
+@dataclass
+class Poseidon2Interaction(HashInteraction):
+    kind: InteractionKind = InteractionKind.POSEIDON2
+
+
+@dataclass
+class KeccakInteraction(HashInteraction):
+    kind: InteractionKind = InteractionKind.KECCAK
+
+
+@dataclass
+class Sha256Interaction(HashInteraction):
+    kind: InteractionKind = InteractionKind.SHA256
+
+
+@dataclass
+class CustomInteraction(InteractionBase):
+    """
+    Catch-all kind for vm-specific tables/chips.
+
+    Payload is fixed-width; use table_id + field meanings in the adapter layer.
+    """
+
+    kind: InteractionKind = InteractionKind.CUSTOM
+    a0: FieldElement = 0
+    a1: FieldElement = 0
+    a2: FieldElement = 0
+    a3: FieldElement = 0
+
+    def payload_schema(self) -> List[str]:
+        return ["a0", "a1", "a2", "a3"]
+
+    def payload(self) -> List[FieldElement]:
+        return [int(self.a0), int(self.a1), int(self.a2), int(self.a3)]
+
+
+MicroOp = ChipRow | InteractionBase
 
 
 class ZKVMTrace:
-    def __init__(self, micro_ops: List[MicroOp]):
-        sorted_ops = sorted(micro_ops, key=lambda x: x.step_idx)
+    def __init__(
+        self,
+        micro_ops: Sequence[MicroOp],
+        *,
+        chip_rows: Optional[Sequence[ChipRow]] = None,
+    ):
+        # Preserve input order (caller decides ordering / grouping).
+        self.micro_ops: List[MicroOp] = list(micro_ops)
 
-        self.steps: OrderedDict[int, Step] = OrderedDict()
-        self.regr_by_step: OrderedDict[int, List[RegisterRead]] = OrderedDict()
-        self.regw_by_step: OrderedDict[int, List[RegisterWrite]] = OrderedDict()
-        self.memr_by_step: OrderedDict[int, List[MemoryRead]] = OrderedDict()
-        self.memw_by_step: OrderedDict[int, List[MemoryWrite]] = OrderedDict()
-        self.inter_by_step: OrderedDict[int, List[Interaction]] = OrderedDict()
-        self.micro_ops_by_step: OrderedDict[int, List[MicroOp]] = OrderedDict()
+        # Allow callers to pass chip_rows separately (legacy) while also supporting
+        # ChipRow entries directly in micro_ops.
+        self.chip_rows: List[ChipRow] = [x for x in self.micro_ops if isinstance(x, ChipRow)]
+        if chip_rows is not None:
+            self.chip_rows.extend(list(chip_rows))
 
-        for uop in sorted_ops:
-            s_idx = uop.step_idx
-            self.micro_ops_by_step.setdefault(s_idx, []).append(uop)
+        self.interactions: List[InteractionBase] = [
+            x for x in self.micro_ops if isinstance(x, InteractionBase)
+        ]
 
-            if isinstance(uop, Step):
-                self.steps[s_idx] = uop
-            elif isinstance(uop, RegisterRead):
-                self.regr_by_step.setdefault(s_idx, []).append(uop)
-            elif isinstance(uop, RegisterWrite):
-                self.regw_by_step.setdefault(s_idx, []).append(uop)
-            elif isinstance(uop, MemoryRead):
-                self.memr_by_step.setdefault(s_idx, []).append(uop)
-            elif isinstance(uop, MemoryWrite):
-                self.memw_by_step.setdefault(s_idx, []).append(uop)
-            elif isinstance(uop, Interaction):
-                self.inter_by_step.setdefault(s_idx, []).append(uop)
+        self.interactions_by_table: OrderedDict[str, List[InteractionBase]] = OrderedDict()
+        for uop in self.interactions:
+            self.interactions_by_table.setdefault(uop.table_id, []).append(uop)
 
-    def get_step(self, step_idx: int) -> Optional[Step]:
-        return self.steps.get(step_idx)
+        self.chip_rows_by_id: Dict[str, ChipRow] = {r.row_id: r for r in self.chip_rows}
 
-    def get_steps(self) -> List[Step]:
-        return list(self.steps.values())
+        self.interactions_by_anchor_row_id: OrderedDict[str, List[InteractionBase]] = OrderedDict()
+        for uop in self.interactions:
+            if uop.anchor_row_id is None:
+                continue
+            self.interactions_by_anchor_row_id.setdefault(uop.anchor_row_id, []).append(uop)
 
-    @property
-    def step_count(self) -> int:
-        return len(self.steps)
+    def by_table_id(self, table_id: str) -> List[InteractionBase]:
+        return self.interactions_by_table.get(table_id, [])
 
-    def get_micro_ops_in_step(self, step_idx: int) -> List[MicroOp]:
-        return self.micro_ops_by_step.get(step_idx, [])
+    def chip_row(self, row_id: str) -> Optional[ChipRow]:
+        return self.chip_rows_by_id.get(row_id)
+
+    def by_anchor_row_id(self, row_id: str) -> List[InteractionBase]:
+        return self.interactions_by_anchor_row_id.get(row_id, [])
 
     def validate(self) -> List[str]:
-        errors = []
-        if not self.steps:
+        if not self.micro_ops:
             return ["Trace is empty"]
-
-        indices = list(self.steps.keys())
-        min_idx, max_idx = indices[0], indices[-1]
-
-        expected_count = max_idx - min_idx + 1
-        if len(self.steps) != expected_count:
-            errors.append(
-                f"Trace step indices not continuous: [{min_idx}, {max_idx}] expects {expected_count} steps, found {len(self.steps)}"
-            )
-
-        for s_idx in range(min_idx, max_idx + 1):
-            if s_idx not in self.steps:
-                errors.append(f"Step {s_idx}: Missing main Step object")
-                continue
-
-            for uop in self.micro_ops_by_step.get(s_idx, []):
-                if uop.step_idx != s_idx:
-                    errors.append(f"Step {s_idx}: Contains mismatched step_idx {uop.step_idx}")
-
+        errors: List[str] = []
+        if len(self.chip_rows_by_id) != len(self.chip_rows):
+            errors.append("Trace has duplicate ChipRow.row_id values")
+        for uop in self.interactions:
+            if uop.anchor_row_id is not None and uop.anchor_row_id not in self.chip_rows_by_id:
+                errors.append(f"Interaction references missing anchor_row_id={uop.anchor_row_id!r}")
         return errors
