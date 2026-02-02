@@ -9,8 +9,8 @@ OPENVM_AUDIT_336_COMMIT = "336f1a475e5aa3513c4c5a266399f4128c119bba"
 OPENVM_AUDIT_F038_COMMIT = "f038f61d21db3aecd3029e1a23ba1ba0bb314800"
 
 OPENVM_AVAILABLE_COMMITS_OR_BRANCHES = [
-    "all",
-    "main",
+    # "all",
+    # "main",
     "regzero",
     "audit-336",
     "audit-f038",

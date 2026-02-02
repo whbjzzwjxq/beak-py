@@ -28,13 +28,13 @@ class PicoFuzzerClient(FuzzerClient):
         logger.info("===")
 
         commits = (
-            _iter_supported_commits()
-            if self.commit_or_branch == "all"
-            else [self.commit_or_branch]
+            _iter_supported_commits() if self.commit_or_branch == "all" else [self.commit_or_branch]
         )
 
         for commit in commits:
-            install_pico(self.zkvm_dir, commit, enable_zkvm_modification=(not self.is_zkvm_modification))
+            install_pico(
+                self.zkvm_dir, commit, enable_zkvm_modification=self.is_zkvm_modification
+            )
 
             fuzzer_out = self.out_dir / f"pico-{commit[:7]}"
             fuzzer_out.mkdir(parents=True, exist_ok=True)
@@ -51,12 +51,12 @@ class PicoFuzzerClient(FuzzerClient):
     def install(self):
         assert self.zkvm_dir, "no zkvm library"
         commits = (
-            _iter_supported_commits()
-            if self.commit_or_branch == "all"
-            else [self.commit_or_branch]
+            _iter_supported_commits() if self.commit_or_branch == "all" else [self.commit_or_branch]
         )
         for commit in commits:
-            install_pico(self.zkvm_dir, commit, enable_zkvm_modification=(not self.is_zkvm_modification))
+            install_pico(
+                self.zkvm_dir, commit, enable_zkvm_modification=self.is_zkvm_modification
+            )
 
     def check(self):
         raise NotImplementedError("No bugs to check yet!")

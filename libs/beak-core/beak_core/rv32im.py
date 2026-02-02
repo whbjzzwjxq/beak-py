@@ -199,10 +199,12 @@ class Instruction:
 
     _asm: str = field(init=False, repr=False)
     _binary: bytes = field(init=False, repr=False)
+    _hex: str = field(init=False, repr=False)
 
     def __post_init__(self):
         self._asm = self.__get_asm()
         self._binary = self.__get_binary()
+        self._hex = f"0x{struct.unpack('<I', self._binary)[0]:08x}"
 
     def __get_asm(self) -> str:
         template = self.mnemonic.assembly_template
@@ -220,7 +222,6 @@ class Instruction:
         )
 
     def __get_binary(self) -> bytes:
-        """Strict RV32IM binary encoder."""
         m = self.mnemonic
         fmt, op, f3, f7 = m.format, m.opcode, m.f3, m.f7
         rd = self.rd or 0
@@ -268,7 +269,11 @@ class Instruction:
                 | op
             )
         elif fmt == RV32Type.SYSTEM:
-            res = (f7 << 20) | (f3 << 12) | op
+            # For ECALL/EBREAK, bits [31:20] are a 12-bit immediate:
+            # - ecall:  imm=0
+            # - ebreak: imm=1
+            # We store that 12-bit immediate in RV32Mnemonic.f7 for these simplified SYSTEM mnemonics.
+            res = ((f7 & 0xFFF) << 20) | (f3 << 12) | op
 
         return struct.pack("<I", res)
 
@@ -329,6 +334,9 @@ class Instruction:
                     mnemonic, rd=r_idx(parts[1]), rs1=r_idx(parts[2]), rs2=r_idx(parts[3])
                 )
             if fmt == RV32Type.I:
+                # Some I-type mnemonics in this simplified model omit operands (e.g. "fence").
+                if mnemonic.assembly_template == TEMPLATE_SYSTEM and len(parts) == 1:
+                    return Instruction(mnemonic)
                 if mnemonic.assembly_template == TEMPLATE_JALR_AND_LOAD:
                     return Instruction(
                         mnemonic, rd=r_idx(parts[1]), imm=imm_val(parts[2]), rs1=r_idx(parts[3])
@@ -352,6 +360,77 @@ class Instruction:
             raise ValueError(f"CRITICAL: Failed to parse instruction: {line} - {e}")
 
         raise ValueError(f"CRITICAL: Unhandled format '{fmt}' for instruction: {mnemonic}")
+
+    @staticmethod
+    def from_binary(binary: bytes) -> "Instruction":
+        if len(binary) != 4:
+            raise ValueError(f"Invalid binary length: {len(binary)}")
+        val = struct.unpack("<I", binary)[0]
+        opcode = val & 0x7F
+        f3 = (val >> 12) & 0x7
+        f7 = (val >> 25) & 0x7F
+        target_mnemonic = None
+        for m in LITERAL_TO_MNEMONIC.values():
+            if m.opcode != opcode:
+                continue
+            # U/J formats do not have funct3; bits [14:12] are part of the immediate.
+            if m.format not in (RV32Type.U, RV32Type.J) and m.f3 != f3:
+                continue
+            if m.format == RV32Type.R and m.f7 != f7:
+                continue
+            if m.format == RV32Type.SYSTEM:
+                imm12 = (val >> 20) & 0xFFF
+                if (m.f7 & 0xFFF) != imm12:
+                    continue
+            if m.format == RV32Type.I and m.literal in ("slli", "srli", "srai") and m.f7 != f7:
+                continue
+            target_mnemonic = m
+            break
+        if not target_mnemonic:
+            raise ValueError(f"Unknown instruction binary: 0x{val:08x}")
+        fmt = target_mnemonic.format
+        rd = (val >> 7) & 0x1F
+        rs1 = (val >> 15) & 0x1F
+        rs2 = (val >> 20) & 0x1F
+        imm = None
+        if fmt == RV32Type.I:
+            imm = val >> 20
+            if imm & 0x800:
+                imm |= ~0xFFF
+            if target_mnemonic.literal in ("slli", "srli", "srai"):
+                imm &= 0x1F
+        elif fmt == RV32Type.S:
+            imm = ((val >> 25) << 5) | ((val >> 7) & 0x1F)
+            if imm & 0x800:
+                imm |= ~0xFFF
+        elif fmt == RV32Type.B:
+            imm = (
+                (((val >> 31) & 1) << 12)
+                | (((val >> 7) & 1) << 11)
+                | (((val >> 25) & 0x3F) << 5)
+                | (((val >> 8) & 0xF) << 1)
+            )
+            if imm & 0x1000:
+                imm |= ~0x1FFF
+        elif fmt == RV32Type.U:
+            imm = (val >> 12) & 0xFFFFF
+        elif fmt == RV32Type.J:
+            imm = (
+                (((val >> 31) & 1) << 20)
+                | (((val >> 12) & 0xFF) << 12)
+                | (((val >> 20) & 1) << 11)
+                | (((val >> 21) & 0x3FF) << 1)
+            )
+            if imm & 0x100000:
+                imm |= ~0x1FFFFF
+        return Instruction(target_mnemonic, rd=rd, rs1=rs1, rs2=rs2, imm=imm)
+
+    @staticmethod
+    def from_hex(hex: str) -> "Instruction":
+        # The textual hex is a 32-bit instruction *word* (e.g. "00c58533"),
+        # but from_binary expects little-endian bytes (as laid out in memory).
+        word = int(hex.replace("0x", ""), 16)
+        return Instruction.from_binary(word.to_bytes(4, "little"))
 
 
 @dataclass

@@ -119,11 +119,14 @@ class Step(MicroOpBase):
     # the pc of this step.
     pc: int
 
+    # the instruction of this step.
+    instruction: Instruction
+
+    # the idx of this instruction in the step.
+    instruction_idx: int
+
     # the next pc of this step.
     next_pc: Optional[int] = None
-
-    # the instruction of this step.
-    instruction: Optional[Instruction] = None
 
     # the reason why this step entered a trap.
     trap: Optional[RV32Trap] = None

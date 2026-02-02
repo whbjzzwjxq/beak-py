@@ -3,108 +3,82 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from beak_core.micro_ops import ZKVMTrace, RegisterWrite, Step
+from beak_core.micro_ops import ZKVMTrace
 from beak_core.rv32im import FuzzingInstance, Instruction
 
 
-class BucketType(str, Enum):
+class RV32BucketType(str, Enum):
     # RISC-V register relevant buckets
-    REG_INTEGRITY = "reg_integrity"  # Topology: x0, alias, triple
-    REG_DEPENDENCY = "reg_dependency"  # Timing: RAW, WAW
-    REG_LIFECYCLE = "reg_lifecycle"  # Context: Segment handover
-    REG_WRITE_PERMISSION = "reg_write_permission"  # Gating: Write intent vs action
+    REG_INTEGRITY_X0_WRITE = "reg_integrity_x0_write"  # Topology: x0
+    REG_INTEGRITY_X0_READ = "reg_integrity_x0_read"  # Topology: x0
+    REG_INTEGRITY_X0_PROXY_BYPASS = "reg_integrity_x0_proxy_bypass"  # Topology: x0
 
+    REG_INTEGRITY_ALIAS_RD_RS1 = "reg_integrity_alias_rd_rs1"  # Topology: alias
+    REG_INTEGRITY_ALIAS_RD_RS2 = "reg_integrity_alias_rd_rs2"  # Topology: alias
+    REG_INTEGRITY_ALIAS_RD_RS1_RS2 = "reg_integrity_alias_rd_rs1_rs2"  # Topology: alias
+    REG_INTEGRITY_ALIAS_RS1_RS2 = "reg_integrity_alias_rs1_rs2"  # Topology: alias
 
-class EvolveActionType(str, Enum):
-    SWAP_OPERAND = "swap_operand"  # rs1 <-> rs2
-    SWAP_REGISTER = "swap_register"  # change rd/rs/rt
-    SWAP_IMMEDIATE = "swap_immediate"  # change imm value
-    SWAP_INST = "swap_inst"  # change opcode
-    ADD_INST = "add_inst"  # insert new instruction (e.g., reveal or nop)
+    REG_DEPENDENCY_RAW = "reg_dependency_raw"  # Timing: RAW
+    REG_DEPENDENCY_WAW = "reg_dependency_waw"  # Timing: WAW
 
-
-@dataclass(frozen=True)
-class BucketKey:
-    bucket_type: BucketType
-    labels: Tuple[str, ...]
-
-    def __str__(self) -> str:
-        return f"{self.bucket_type.value}: {','.join(self.labels)}"
+    # TODO: Add more buckets
 
 
 @dataclass(frozen=True)
-class BucketHit:
-    key: BucketKey
-    step_idxs: List[int]
-    instruction_idxs: List[int]
+class RV32BucketHit:
+    bucket_type: RV32BucketType
+    core_instruction_idxs: List[int]
     details: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         object.__setattr__(self, "details", dict(self.details))
 
 
-@dataclass(frozen=True)
-class EvolveAction:
-    action_type: EvolveActionType
-    instruction_idx: int
-    params: Dict[str, Any] = field(default_factory=dict)
-
-    def apply(self, instance: FuzzingInstance) -> FuzzingInstance:
-        # TODO: Implement
-        return instance
-
-
-class Bucket(ABC):
+class RV32Bucket(ABC):
     @abstractmethod
-    def get_type(self) -> BucketType:
+    def get_type(self) -> RV32BucketType:
         raise NotImplementedError
 
     @abstractmethod
-    def boundary_cases(self) -> Iterable[BucketKey]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def match_hits(self, trace: ZKVMTrace) -> List[BucketHit]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def evolve(self, hit: BucketHit) -> Optional[EvolveAction]:
+    def match_hits(
+        self, context: FuzzingInstance, inst_idx: int, inst: Instruction
+    ) -> Optional[RV32BucketHit]:
         raise NotImplementedError
 
     @abstractmethod
     def initial_seeds(self) -> Iterable[FuzzingInstance]:
         raise NotImplementedError
 
-class RegIntegrityBoundary(str, Enum):
 
-    X0_WRITE = "x0_write"
-    X0_AS_SOURCE = "x0_as_source"
-    X0_PROXY_BYPASS = "x0_proxy_bypass"
+class RV32BucketRegIntegrityX0Write(RV32Bucket):
+    def get_type(self) -> RV32BucketType:
+        return RV32BucketType.REG_INTEGRITY_X0_WRITE
 
-    ALIAS_RD_RS1 = "alias_rd_rs1"
-    ALIAS_RS1_RS2 = "alias_rs1_rs2"
-    ALIAS_RD_RS2 = "alias_rd_rs2"
-    ALIAS_RD_RS1_RS2 = "alias_rd_rs1_rs2"
-
-
-class RegisterIntegrityBucket(Bucket):
-    def get_type(self) -> BucketType:
-        return BucketType.REG_INTEGRITY
-
-    def boundary_cases(self) -> Iterable[BucketKey]:
-        for b in RegIntegrityBoundary:
-            yield BucketKey(self.get_type(), (b.value,))
-
-    def match_hits(self, trace: ZKVMTrace) -> List[BucketHit]:
-        # TODO: Implement
-        return []
-
-    def evolve(self, hit: BucketHit) -> Optional[EvolveAction]:
-        # TODO: Implement
+    def match_hits(
+        self, context: FuzzingInstance, inst_idx: int, inst: Instruction
+    ) -> Optional[RV32BucketHit]:
+        rd = inst.rd
+        if rd == 0:
+            return RV32BucketHit(
+                bucket_type=self.get_type(),
+                core_instruction_idxs=[context.core_instruction_idxs[inst_idx]],
+            )
         return None
 
-    def initial_seeds(self) -> Iterable[FuzzingInstance]:
-        # TODO: Implement
-        return []
+
+class RV32BucketRegIntegrityX0Read(RV32Bucket):
+    def get_type(self) -> RV32BucketType:
+        return RV32BucketType.REG_INTEGRITY_X0_READ
+
+    def match_hits(
+        self, context: FuzzingInstance, inst_idx: int, inst: Instruction
+    ) -> Optional[RV32BucketHit]:
+        rd = inst.rd
+        if rd == 0:
+            return RV32BucketHit(
+                bucket_type=self.get_type(),
+                core_instruction_idxs=[context.core_instruction_idxs[inst_idx]],
+            )
+        return None
