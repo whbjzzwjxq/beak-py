@@ -226,12 +226,8 @@ def parse_riscv_tests(
             continue
 
         word_hex = m_inst.group(1)
-        try:
-            word = int(word_hex, 16)
-            inst = Instruction.from_binary(word.to_bytes(4, "little"))
-        except Exception:
-            # Skip instructions not supported by our simplified decoder.
-            continue
+        word = int(word_hex, 16)
+        inst = Instruction.from_binary(word.to_bytes(4, "little"))
         current_insts.append(inst)
 
     flush()

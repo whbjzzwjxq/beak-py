@@ -10,6 +10,7 @@ from beak_core.rv32im import (
     ECALL,
     EBREAK,
     FENCE,
+    FENCE_I,
     Instruction,
     JAL,
     LUI,
@@ -49,6 +50,7 @@ def _u32(inst: Instruction) -> int:
         ("ebreak", 0x00100073),
         # "Simplified" fence encoding in this project: operands omitted => all zeros.
         ("fence", 0x0000000F),
+        ("fence.i", 0x0000100F),
     ],
 )
 def test_from_asm_known_encodings(asm: str, expected_u32: int):

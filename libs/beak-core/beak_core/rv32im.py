@@ -124,6 +124,7 @@ EBREAK = RV32Mnemonic("ebreak", RV32Type.SYSTEM, 0x73, 0x0, 0x01, TEMPLATE_SYSTE
 
 # Opcode 0x0F: Fence, not used in the fuzzer
 FENCE = RV32Mnemonic("fence", RV32Type.I, 0x0F, 0x0, 0x00, TEMPLATE_SYSTEM)
+FENCE_I = RV32Mnemonic("fence.i", RV32Type.I, 0x0F, 0x1, 0x00, TEMPLATE_SYSTEM)
 
 LITERAL_TO_MNEMONIC = {
     "add": ADD,
@@ -174,6 +175,7 @@ LITERAL_TO_MNEMONIC = {
     "ecall": ECALL,
     "ebreak": EBREAK,
     "fence": FENCE,
+    "fence.i": FENCE_I,
 }
 
 R_TYPE_INSTRUCTIONS = [v for v in LITERAL_TO_MNEMONIC.values() if v.format == RV32Type.R]
@@ -186,7 +188,7 @@ LOAD_INSTRUCTIONS = [LB, LH, LW, LBU, LHU]
 STORE_INSTRUCTIONS = [SB, SH, SW]
 BRANCH_INSTRUCTIONS = [BEQ, BNE, BLT, BGE, BLTU, BGEU]
 SYSTEM_INSTRUCTIONS = [ECALL, EBREAK]
-FENCE_INSTRUCTIONS = [FENCE]
+FENCE_INSTRUCTIONS = [FENCE, FENCE_I]
 
 
 @dataclass
