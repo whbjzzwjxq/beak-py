@@ -102,6 +102,16 @@ def _encode_interaction_kind(kind: InteractionKind) -> int:
 
 
 @dataclass
+class InteractionMultiplicity:
+    value: Optional[FieldElement] = None
+    # Optional provenance for multiplicity when it is derived from a specific trace field.
+    #
+    # This lets buckets/injections distinguish "same numeric value" vs "same underlying field".
+    # Convention: "gates.<key>" or "locals.<key>" on the anchor row (e.g. "gates.is_real").
+    ref: Optional[str] = None
+
+
+@dataclass
 class InteractionBase:
     """
     Interaction micro-op: the only micro-op type we keep.
@@ -120,8 +130,9 @@ class InteractionBase:
     event_id: Optional[str] = None
     # the interaction kind (coarse, cross-vm). use table_id for sub-kinds.
     kind: InteractionKind = InteractionKind.CUSTOM
-    # the interaction multiplicity (count/weight) used by the balancing argument.
-    multiplicity: Optional[FieldElement] = None
+    # The interaction multiplicity (count/weight) used by the balancing argument.
+    # If present, `ref` can optionally point at the anchor-row field it was derived from.
+    multiplicity: Optional[InteractionMultiplicity] = None
 
     def __post_init__(self):
         if not isinstance(self.io, InteractionType):
@@ -131,6 +142,8 @@ class InteractionBase:
         if not isinstance(self.kind, InteractionKind):
             # Allow callers/serializers to pass raw strings.
             self.kind = InteractionKind(str(self.kind))
+        if self.multiplicity is not None and not isinstance(self.multiplicity, InteractionMultiplicity):
+            raise ValueError("multiplicity must be an InteractionMultiplicity when set")
 
     def payload_schema(self) -> List[str]:
         return []
@@ -401,9 +414,32 @@ class ZKVMTrace:
         micro_ops: Sequence[MicroOp],
         *,
         chip_rows: Optional[Sequence[ChipRow]] = None,
+        # Optional op-level grouping: a list of op-spans, where each span is a list
+        # of indices into `micro_ops` belonging to the same "core instruction / op".
+        #
+        # This is used by buckets/injections that need op-level reasoning (e.g. "does this
+        # instruction have >=2 following instructions?") even when a single op expands
+        # into multiple micro-ops across chips.
+        op_spans: Optional[Sequence[Sequence[int]]] = None,
     ):
         # Preserve input order (caller decides ordering / grouping).
         self.micro_ops: List[MicroOp] = list(micro_ops)
+
+        self.op_spans: Optional[List[List[int]]] = None
+        if op_spans is not None:
+            spans: List[List[int]] = [list(s) for s in op_spans]
+            for op_idx, span in enumerate(spans):
+                if not span:
+                    raise ValueError(f"op_spans[{op_idx}] is empty")
+                for i in span:
+                    if not isinstance(i, int):
+                        raise ValueError(f"op_spans[{op_idx}] contains non-int index: {i!r}")
+                    if i < 0 or i >= len(self.micro_ops):
+                        raise ValueError(
+                            f"op_spans[{op_idx}] contains out-of-range index: {i} "
+                            f"(len(micro_ops)={len(self.micro_ops)})"
+                        )
+            self.op_spans = spans
 
         # Allow callers to pass chip_rows separately (legacy) while also supporting
         # ChipRow entries directly in micro_ops.
@@ -435,6 +471,12 @@ class ZKVMTrace:
 
     def by_anchor_row_id(self, row_id: str) -> List[InteractionBase]:
         return self.interactions_by_anchor_row_id.get(row_id, [])
+
+    def op_micro_ops(self, op_idx: int) -> List[MicroOp]:
+        if self.op_spans is None:
+            raise ValueError("Trace has no op_spans; op-level access is unavailable")
+        span = self.op_spans[op_idx]
+        return [self.micro_ops[i] for i in span]
 
     def validate(self) -> List[str]:
         if not self.micro_ops:
