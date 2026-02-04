@@ -48,6 +48,9 @@ class Record:
                 return entry
         return None  # context not available or no entries present
 
+    def get_entries_by_context(self, context: str) -> list[RecordEntry]:
+        return [e for e in self.entries if e.context == context]
+
     def get_last_entry(self) -> RecordEntry | None:
         if len(self.entries) > 0:
             return self.entries[-1]
@@ -103,3 +106,28 @@ def record_from_exec_status(exec_status: ExecStatus) -> Record:
         panics.append(RecordPanic(context, rust_panic))
 
     return Record(entries, panics, exec_status)
+
+
+def micro_ops_entries(record: Record) -> list[dict[str, Any]]:
+    """Returns all parsed entries with context == 'micro_ops'."""
+    return [e.entries for e in record.get_entries_by_context("micro_ops")]
+
+
+def micro_ops_deltas_by_step(record: Record) -> dict[int, dict[str, int]]:
+    """Best-effort convenience helper to build {step: {chip_name: delta}}."""
+    out: dict[int, dict[str, int]] = {}
+    for entry in micro_ops_entries(record):
+        step = entry.get("step")
+        chips = entry.get("chips")
+        if not isinstance(step, int) or not isinstance(chips, list):
+            continue
+        step_map: dict[str, int] = {}
+        for chip_entry in chips:
+            if not isinstance(chip_entry, dict):
+                continue
+            name = chip_entry.get("chip")
+            delta = chip_entry.get("delta")
+            if isinstance(name, str) and isinstance(delta, int):
+                step_map[name] = delta
+        out[step] = step_map
+    return out

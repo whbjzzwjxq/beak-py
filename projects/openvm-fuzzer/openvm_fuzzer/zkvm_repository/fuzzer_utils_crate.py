@@ -72,12 +72,14 @@ pub struct GlobalState {
     pub assertions: bool,
     pub seed: u64,
     pub step: u64,
+    pub micro_idx: u32,
     pub injection_kind: String,
     pub injection_step: u64,
     pub rng: StdRng,
     pub hint_instruction: String,  // the default is an empty string
     pub hint_assembly: String,  // the default is an empty string
     pub hint_pc: u32,  // the default is an empty string
+    pub last_row_id: String,
 }
 
 impl GlobalState {
@@ -89,11 +91,13 @@ impl GlobalState {
             seed: 0,
             injection_kind: String::new(),
             step: 0,
+            micro_idx: 0,
             injection_step: 0,
             rng: StdRng::seed_from_u64(0),
             hint_instruction: String::new(),
             hint_assembly: String::new(),
             hint_pc: 0,
+            last_row_id: String::new(),
         }
     }
 }
@@ -241,6 +245,7 @@ pub fn update_hints(pc: u32, instruction: &String, assembly: &String) {
     state.hint_pc = pc;
     state.hint_instruction = instruction.clone();
     state.hint_assembly = assembly.clone();
+    state.micro_idx = 0;
 }
 
 ////////////////
@@ -272,28 +277,36 @@ macro_rules! fuzzer_assert_eq {
     ($left:expr, $right:expr $(,)?) => {{
         if $crate::is_assertions() {
             assert_eq!($left, $right);
-        } else if $left != $right {
-            println!(
-                "Warning: fuzzer_assert_eq! failed: `{} != {}` (left: `{:?}`, right: `{:?}`)",
-                stringify!($left),
-                stringify!($right),
-                &$left,
-                &$right,
-            );
+        } else {
+            let left_val = $left;
+            let right_val = $right;
+            if left_val != right_val {
+                println!(
+                    "Warning: fuzzer_assert_eq! failed: `{} != {}` (left: `{:?}`, right: `{:?}`)",
+                    stringify!($left),
+                    stringify!($right),
+                    &left_val,
+                    &right_val,
+                );
+            }
         }
     }};
     ($left:expr, $right:expr, $($arg:tt)+) => {{
         if $crate::is_assertions() {
             assert_eq!($left, $right, $($arg)+);
-        } else if $left != $right {
-            println!(
-                "Warning: fuzzer_assert_eq! failed: `{} != {}` (left: `{:?}`, right: `{:?}`): {}",
-                stringify!($left),
-                stringify!($right),
-                &$left,
-                &$right,
-                format_args!($($arg)+),
-            );
+        } else {
+            let left_val = $left;
+            let right_val = $right;
+            if left_val != right_val {
+                println!(
+                    "Warning: fuzzer_assert_eq! failed: `{} != {}` (left: `{:?}`, right: `{:?}`): {}",
+                    stringify!($left),
+                    stringify!($right),
+                    &left_val,
+                    &right_val,
+                    format_args!($($arg)+),
+                );
+            }
         }
     }};
 }
@@ -304,28 +317,36 @@ macro_rules! fuzzer_assert_ne {
     ($left:expr, $right:expr $(,)?) => {{
         if $crate::is_assertions() {
             assert_ne!($left, $right);
-        } else if $left == $right {
-            println!(
-                "Warning: fuzzer_assert_ne! failed: `{} == {}` (left: `{:?}`, right: `{:?}`)",
-                stringify!($left),
-                stringify!($right),
-                &$left,
-                &$right,
-            );
+        } else {
+            let left_val = $left;
+            let right_val = $right;
+            if left_val == right_val {
+                println!(
+                    "Warning: fuzzer_assert_ne! failed: `{} == {}` (left: `{:?}`, right: `{:?}`)",
+                    stringify!($left),
+                    stringify!($right),
+                    &left_val,
+                    &right_val,
+                );
+            }
         }
     }};
     ($left:expr, $right:expr, $($arg:tt)+) => {{
         if $crate::is_assertions() {
             assert_ne!($left, $right, $($arg)+);
-        } else if $left == $right {
-            println!(
-                "Warning: fuzzer_assert_ne! failed: `{} == {}` (left: `{:?}`, right: `{:?}`): {}",
-                stringify!($left),
-                stringify!($right),
-                &$left,
-                &$right,
-                format_args!($($arg)+),
-            );
+        } else {
+            let left_val = $left;
+            let right_val = $right;
+            if left_val == right_val {
+                println!(
+                    "Warning: fuzzer_assert_ne! failed: `{} == {}` (left: `{:?}`, right: `{:?}`): {}",
+                    stringify!($left),
+                    stringify!($right),
+                    &left_val,
+                    &right_val,
+                    format_args!($($arg)+),
+                );
+            }
         }
     }};
 }
@@ -376,6 +397,197 @@ pub fn print_trace_info() {
             state.hint_assembly,
         );
     }
+}
+
+fn escape_json_string(value: &str) -> String {
+    // Minimal JSON string escaping (sufficient for our trace/record payloads).
+    let mut out = String::with_capacity(value.len() + 8);
+    for ch in value.chars() {
+        match ch {
+            '\\\\' => out.push_str("\\\\\\\\"),
+            '\"' => {
+                out.push('\\\\');
+                out.push('\"');
+            }
+            '\\n' => {
+                out.push('\\\\');
+                out.push('n');
+            }
+            '\\r' => {
+                out.push('\\\\');
+                out.push('r');
+            }
+            '\\t' => {
+                out.push('\\\\');
+                out.push('t');
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+pub fn print_micro_ops_deltas(air_names: &Vec<String>, prev_heights: &Vec<usize>, curr_heights: &Vec<usize>) {
+    let state = GLOBAL_STATE.lock().unwrap();
+    if !state.trace_logging {
+        return;
+    }
+
+    let mut chips = String::from("[");
+    let mut first = true;
+    for (i, chip_name) in air_names.iter().enumerate() {
+        let prev = *prev_heights.get(i).unwrap_or(&0);
+        let curr = *curr_heights.get(i).unwrap_or(&prev);
+        if curr < prev {
+            continue;
+        }
+        let delta = curr - prev;
+        if delta == 0 {
+            continue;
+        }
+        if !first {
+            chips.push_str(",");
+        }
+        first = false;
+        chips.push_str(&format!(
+            "{{\\"chip\\":\\"{}\\",\\"delta\\":{},\\"height\\":{}}}",
+            escape_json_string(chip_name),
+            delta,
+            curr
+        ));
+    }
+    chips.push_str("]");
+
+    println!(
+        "<record>{{\\
+            \\"context\\":\\"micro_ops\\", \\
+            \\"step\\":{}, \\
+            \\"pc\\":{}, \\
+            \\"instruction\\":\\"{}\\", \\
+            \\"assembly\\":\\"{}\\", \\
+            \\"chips\\":{}\\
+        }}</record>",
+        state.step,
+        state.hint_pc,
+        escape_json_string(&state.hint_instruction),
+        escape_json_string(&state.hint_assembly),
+        chips,
+    );
+}
+
+pub fn print_micro_op_json(chip: &String, payload_json: &String) {
+    let mut state = GLOBAL_STATE.lock().unwrap();
+    if !state.trace_logging {
+        return;
+    }
+
+    let uop_idx = state.micro_idx;
+    state.micro_idx = state.micro_idx.wrapping_add(1);
+
+    println!(
+        "<record>{{\\
+            \\"context\\":\\"micro_ops_uop\\", \\
+            \\"step\\":{}, \\
+            \\"pc\\":{}, \\
+            \\"instruction\\":\\"{}\\", \\
+            \\"assembly\\":\\"{}\\", \\
+            \\"chip\\":\\"{}\\", \\
+            \\"uop_idx\\":{}, \\
+            \\"payload\\":{}\\
+        }}</record>",
+        state.step,
+        state.hint_pc,
+        escape_json_string(&state.hint_instruction),
+        escape_json_string(&state.hint_assembly),
+        escape_json_string(chip),
+        uop_idx,
+        payload_json,
+    );
+}
+
+pub fn print_chip_row_json(domain: &str, chip: &String, gates_json: &str, locals_json: &str) {
+    let mut state = GLOBAL_STATE.lock().unwrap();
+    if !state.trace_logging {
+        return;
+    }
+
+    let uop_idx = state.micro_idx;
+    state.micro_idx = state.micro_idx.wrapping_add(1);
+    let row_id = format!("openvm:{}:{}", state.step, uop_idx);
+    state.last_row_id = row_id.clone();
+
+    println!(
+        "<record>{{\\
+            \\"context\\":\\"micro_op\\", \\
+            \\"micro_op_type\\":\\"chip_row\\", \\
+            \\"step\\":{}, \\
+            \\"pc\\":{}, \\
+            \\"instruction\\":\\"{}\\", \\
+            \\"assembly\\":\\"{}\\", \\
+            \\"row_id\\":\\"{}\\", \\
+            \\"domain\\":\\"{}\\", \\
+            \\"chip\\":\\"{}\\", \\
+            \\"gates\\":{}, \\
+            \\"locals\\":{}\\
+        }}</record>",
+        state.step,
+        state.hint_pc,
+        escape_json_string(&state.hint_instruction),
+        escape_json_string(&state.hint_assembly),
+        escape_json_string(&row_id),
+        escape_json_string(domain),
+        escape_json_string(chip),
+        gates_json,
+        locals_json,
+    );
+}
+
+pub fn get_last_row_id() -> String {
+    GLOBAL_STATE.lock().unwrap().last_row_id.clone()
+}
+
+pub fn print_interaction_json(
+    table_id: &str,
+    io: &str,
+    kind: &str,
+    anchor_row_id: &str,
+    payload_json: &str,
+    multiplicity_value: u64,
+    multiplicity_ref: &str,
+) {
+    let state = GLOBAL_STATE.lock().unwrap();
+    if !state.trace_logging {
+        return;
+    }
+
+    println!(
+        "<record>{{\\
+            \\"context\\":\\"micro_op\\", \\
+            \\"micro_op_type\\":\\"interaction\\", \\
+            \\"step\\":{}, \\
+            \\"pc\\":{}, \\
+            \\"instruction\\":\\"{}\\", \\
+            \\"assembly\\":\\"{}\\", \\
+            \\"table_id\\":\\"{}\\", \\
+            \\"io\\":\\"{}\\", \\
+            \\"kind\\":\\"{}\\", \\
+            \\"scope\\":\\"global\\", \\
+            \\"anchor_row_id\\":\\"{}\\", \\
+            \\"multiplicity\\":{{\\"value\\":{},\\"ref\\":\\"{}\\"}}, \\
+            \\"payload\\":{}\\
+        }}</record>",
+        state.step,
+        state.hint_pc,
+        escape_json_string(&state.hint_instruction),
+        escape_json_string(&state.hint_assembly),
+        escape_json_string(table_id),
+        escape_json_string(io),
+        escape_json_string(kind),
+        escape_json_string(anchor_row_id),
+        multiplicity_value,
+        escape_json_string(multiplicity_ref),
+        payload_json,
+    );
 }
 
 

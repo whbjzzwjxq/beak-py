@@ -27,11 +27,13 @@ use crate::{
     arch::{instructions::*, ExecutionState, InstructionExecutor},
     system::memory::MemoryImage,
 };
+use crate::system::memory::online::MemoryLogEntry;
 
 
 // <----------------------- START OF FAULT INJECTION ----------------------->
 
 use fuzzer_utils;
+use serde_json::json;
 
 // <------------------------ END OF FAULT INJECTION ------------------------>
 
@@ -233,6 +235,11 @@ impl<F: PrimeField32, VC: VmConfig<F>> ExecutionSegment<F, VC> {
             .begin(ExecutionState::new(pc, timestamp));
 
         let mut did_terminate = false;
+        let mut terminate_exit_code: Option<u32> = None;
+        let mut prev_trace_heights = self
+            .chip_complex
+            .dynamic_trace_heights()
+            .collect::<Vec<_>>();
 
         loop {
             #[allow(unused_variables)]
@@ -287,6 +294,55 @@ impl<F: PrimeField32, VC: VmConfig<F>> ExecutionSegment<F, VC> {
                 let assembly_debug = format!("{:?}", instruction);
                 fuzzer_utils::update_hints(pc, &instruction_debug, &assembly_debug);
 
+                // Program-table semantics: the program bus constrains that (pc -> opcode/operands).
+                // Emit a ChipRow so op-level analyses can include this "system" chip alongside
+                // the instruction's adapter/core chips.
+                if fuzzer_utils::is_trace_logging() {
+                    let gates = json!({"is_real": 1}).to_string();
+                    let locals = json!({
+                        "pc": pc,
+                        "opcode": instruction.opcode.as_usize(),
+                        "operands": [
+                            instruction.a.as_canonical_u32(),
+                            instruction.b.as_canonical_u32(),
+                            instruction.c.as_canonical_u32(),
+                            instruction.d.as_canonical_u32(),
+                            instruction.e.as_canonical_u32(),
+                            instruction.f.as_canonical_u32(),
+                            instruction.g.as_canonical_u32(),
+                        ],
+                    })
+                    .to_string();
+                    let chip = "ProgramChip".to_string();
+                    fuzzer_utils::print_chip_row_json("openvm", &chip, &gates, &locals);
+
+                    // Program-table interaction: lookup (pc -> opcode/operands).
+                    let anchor_row_id = fuzzer_utils::get_last_row_id();
+                    let payload = json!({
+                        "pc": pc,
+                        "opcode": instruction.opcode.as_usize(),
+                        "operands": [
+                            instruction.a.as_canonical_u32(),
+                            instruction.b.as_canonical_u32(),
+                            instruction.c.as_canonical_u32(),
+                            instruction.d.as_canonical_u32(),
+                            instruction.e.as_canonical_u32(),
+                            instruction.f.as_canonical_u32(),
+                            instruction.g.as_canonical_u32(),
+                        ],
+                    })
+                    .to_string();
+                    fuzzer_utils::print_interaction_json(
+                        "ProgramBus",
+                        "recv",
+                        "program",
+                        &anchor_row_id,
+                        &payload,
+                        1,
+                        "gates.is_real",
+                    );
+                }
+
                 if fuzzer_utils::is_injection_at_step("INSTR_WORD_MOD") {
                     new_instruction = fuzzer_utils::random_mutate_instruction(instruction);
                     fuzzer_utils::print_injection_info(
@@ -307,67 +363,257 @@ impl<F: PrimeField32, VC: VmConfig<F>> ExecutionSegment<F, VC> {
 
                 if opcode == SystemOpcode::TERMINATE.global_opcode() {
                     did_terminate = true;
-                    self.chip_complex.connector_chip_mut().end(
-                        ExecutionState::new(pc, timestamp),
-                        Some(c.as_canonical_u32()),
-                    );
-                    break;
+                    terminate_exit_code = Some(c.as_canonical_u32());
+                    (opcode, dsl_instr.cloned())
                 }
-
-                // Some phantom instruction handling is more convenient to do here than in
-                // PhantomChip.
-                if opcode == SystemOpcode::PHANTOM.global_opcode() {
-                    // Note: the discriminant is the lower 16 bits of the c operand.
-                    let discriminant = c.as_canonical_u32() as u16;
-                    let phantom = SysPhantom::from_repr(discriminant);
-                    tracing::trace!("pc: {pc:#x} | system phantom: {phantom:?}");
-                    match phantom {
-                        Some(SysPhantom::DebugPanic) => {
-                            if let Some(mut backtrace) = prev_backtrace {
-                                backtrace.resolve();
-                                eprintln!("openvm program failure; backtrace:\n{:?}", backtrace);
-                            } else {
-                                eprintln!("openvm program failure; no backtrace");
+                else
+                {
+                    // Some phantom instruction handling is more convenient to do here than in
+                    // PhantomChip.
+                    if opcode == SystemOpcode::PHANTOM.global_opcode() {
+                        // Note: the discriminant is the lower 16 bits of the c operand.
+                        let discriminant = c.as_canonical_u32() as u16;
+                        let phantom = SysPhantom::from_repr(discriminant);
+                        tracing::trace!("pc: {pc:#x} | system phantom: {phantom:?}");
+                        match phantom {
+                            Some(SysPhantom::DebugPanic) => {
+                                if let Some(mut backtrace) = prev_backtrace {
+                                    backtrace.resolve();
+                                    eprintln!("openvm program failure; backtrace:\n{:?}", backtrace);
+                                } else {
+                                    eprintln!("openvm program failure; no backtrace");
+                                }
+                                return Err(ExecutionError::Fail { pc });
                             }
-                            return Err(ExecutionError::Fail { pc });
+                            Some(SysPhantom::CtStart) =>
+                            {
+                                #[cfg(feature = "bench-metrics")]
+                                metrics
+                                    .cycle_tracker
+                                    .start(dsl_instr.cloned().unwrap_or("Default".to_string()))
+                            }
+                            Some(SysPhantom::CtEnd) =>
+                            {
+                                #[cfg(feature = "bench-metrics")]
+                                metrics
+                                    .cycle_tracker
+                                    .end(dsl_instr.cloned().unwrap_or("Default".to_string()))
+                            }
+                            _ => {}
                         }
-                        Some(SysPhantom::CtStart) =>
-                        {
-                            #[cfg(feature = "bench-metrics")]
-                            metrics
-                                .cycle_tracker
-                                .start(dsl_instr.cloned().unwrap_or("Default".to_string()))
-                        }
-                        Some(SysPhantom::CtEnd) =>
-                        {
-                            #[cfg(feature = "bench-metrics")]
-                            metrics
-                                .cycle_tracker
-                                .end(dsl_instr.cloned().unwrap_or("Default".to_string()))
-                        }
-                        _ => {}
                     }
-                }
-                prev_backtrace = trace.cloned();
+                    prev_backtrace = trace.cloned();
 
-                if let Some(executor) = chip_complex.inventory.get_mut_executor(&opcode) {
-                    let next_state = InstructionExecutor::execute(
-                        executor,
-                        memory_controller,
-                        instruction,
-                        ExecutionState::new(pc, timestamp),
-                    )?;
-                    assert!(next_state.timestamp > timestamp);
-                    pc = next_state.pc;
-                    timestamp = next_state.timestamp;
-                } else {
-                    return Err(ExecutionError::DisabledOperation { pc, opcode });
-                };
-                (opcode, dsl_instr.cloned())
+                    if let Some(executor) = chip_complex.inventory.get_mut_executor(&opcode) {
+                        // Snapshot memory logs to attribute memory chips per instruction.
+                        let mem_log_start = memory_controller.get_memory_logs().len();
+
+                        let prev_pc = pc;
+                        let prev_timestamp = timestamp;
+                        let next_state = InstructionExecutor::execute(
+                            executor,
+                            memory_controller,
+                            instruction,
+                            ExecutionState::new(pc, timestamp),
+                        )?;
+                        assert!(next_state.timestamp > timestamp);
+                        pc = next_state.pc;
+                        timestamp = next_state.timestamp;
+
+                        // Emit memory-related chips as ChipRow markers.
+                        //
+                        // NOTE: During execution, OpenVM accumulates *memory logs* in online memory.
+                        // Those logs are later replayed in `finalize()` to populate memory trace
+                        // chips (Boundary, AccessAdapter<N>, ...). We attribute per-instruction
+                        // "memory chips involved" based on the newly-added memory-log entries here.
+                        if fuzzer_utils::is_trace_logging() {
+                            let gates = json!({"is_real": 1}).to_string();
+                            let logs = memory_controller.get_memory_logs();
+                            let new_logs = &logs[mem_log_start..];
+
+                            let mut boundary_spaces: Vec<u32> = Vec::new();
+                            let mut access_count: u32 = 0;
+
+                            for (i, entry) in new_logs.iter().enumerate() {
+                                let record_id = (mem_log_start + i) as u32;
+                                match entry {
+                                    MemoryLogEntry::Read { address_space, pointer, len } => {
+                                        access_count += 1;
+                                        if *address_space != 0 && !boundary_spaces.contains(address_space) {
+                                            boundary_spaces.push(*address_space);
+                                        }
+                                        let chip = format!("AccessAdapter<{}>", len);
+                                        let locals = json!({
+                                            "record_id": record_id,
+                                            "op": "read",
+                                            "address_space": address_space,
+                                            "pointer": pointer,
+                                            "len": len,
+                                        })
+                                        .to_string();
+                                        fuzzer_utils::print_chip_row_json("openvm", &chip, &gates, &locals);
+
+                                        let anchor_row_id = fuzzer_utils::get_last_row_id();
+                                        let payload = json!({
+                                            "address_space": address_space,
+                                            "pointer": pointer,
+                                            "len": len,
+                                            "record_id": record_id,
+                                        })
+                                        .to_string();
+                                        fuzzer_utils::print_interaction_json(
+                                            "MemoryBus",
+                                            "recv",
+                                            "memory",
+                                            &anchor_row_id,
+                                            &payload,
+                                            1,
+                                            "gates.is_real",
+                                        );
+                                    }
+                                    MemoryLogEntry::Write { address_space, pointer, data } => {
+                                        access_count += 1;
+                                        if *address_space != 0 && !boundary_spaces.contains(address_space) {
+                                            boundary_spaces.push(*address_space);
+                                        }
+                                        let n = data.len();
+                                        let chip = format!("AccessAdapter<{}>", n);
+                                        let locals = json!({
+                                            "record_id": record_id,
+                                            "op": "write",
+                                            "address_space": address_space,
+                                            "pointer": pointer,
+                                            "len": n,
+                                        })
+                                        .to_string();
+                                        fuzzer_utils::print_chip_row_json("openvm", &chip, &gates, &locals);
+
+                                        let anchor_row_id = fuzzer_utils::get_last_row_id();
+                                        let payload = json!({
+                                            "address_space": address_space,
+                                            "pointer": pointer,
+                                            "len": n,
+                                            "record_id": record_id,
+                                        })
+                                        .to_string();
+                                        fuzzer_utils::print_interaction_json(
+                                            "MemoryBus",
+                                            "send",
+                                            "memory",
+                                            &anchor_row_id,
+                                            &payload,
+                                            1,
+                                            "gates.is_real",
+                                        );
+                                    }
+                                    MemoryLogEntry::IncrementTimestampBy(_) => {}
+                                }
+                            }
+
+                            if access_count > 0 && !boundary_spaces.is_empty() {
+                                let chip = "Boundary".to_string();
+                                let locals = json!({
+                                    "access_count": access_count,
+                                    "address_spaces": boundary_spaces,
+                                })
+                                .to_string();
+                                fuzzer_utils::print_chip_row_json("openvm", &chip, &gates, &locals);
+
+                                let anchor_row_id = fuzzer_utils::get_last_row_id();
+                                let payload = json!({
+                                    "access_count": access_count,
+                                    "address_spaces": boundary_spaces,
+                                })
+                                .to_string();
+                                fuzzer_utils::print_interaction_json(
+                                    "Boundary",
+                                    "send",
+                                    "memory",
+                                    &anchor_row_id,
+                                    &payload,
+                                    1,
+                                    "gates.is_real",
+                                );
+                            }
+                        }
+
+                        // Execution-bus semantics: (pc,timestamp) transitions are constrained via
+                        // the execution bus (checked by the connector air). We record the edge as
+                        // a ChipRow so buckets can reason about next_pc / timestamp changes.
+                        if fuzzer_utils::is_trace_logging() {
+                            let gates = json!({"is_real": 1}).to_string();
+                            let locals = json!({
+                                "from_pc": prev_pc,
+                                "to_pc": pc,
+                                "from_timestamp": prev_timestamp,
+                                "to_timestamp": timestamp,
+                                "opcode": opcode.as_usize(),
+                            })
+                            .to_string();
+                            let chip = "VmConnectorAir".to_string();
+                            fuzzer_utils::print_chip_row_json("openvm", &chip, &gates, &locals);
+
+                            let anchor_row_id = fuzzer_utils::get_last_row_id();
+                            let recv_payload = json!({
+                                "pc": prev_pc,
+                                "timestamp": prev_timestamp,
+                            })
+                            .to_string();
+                            fuzzer_utils::print_interaction_json(
+                                "ExecutionBus",
+                                "recv",
+                                "global",
+                                &anchor_row_id,
+                                &recv_payload,
+                                1,
+                                "gates.is_real",
+                            );
+                            let send_payload = json!({
+                                "pc": pc,
+                                "timestamp": timestamp,
+                            })
+                            .to_string();
+                            fuzzer_utils::print_interaction_json(
+                                "ExecutionBus",
+                                "send",
+                                "global",
+                                &anchor_row_id,
+                                &send_payload,
+                                1,
+                                "gates.is_real",
+                            );
+                        }
+                    } else {
+                        return Err(ExecutionError::DisabledOperation { pc, opcode });
+                    };
+                    (opcode, dsl_instr.cloned())
+                }
             };
 
             #[cfg(feature = "bench-metrics")]
             self.update_instruction_metrics(pc, opcode, dsl_instr);
+
+            if did_terminate {
+                self.chip_complex.connector_chip_mut().end(
+                    ExecutionState::new(pc, timestamp),
+                    terminate_exit_code.take(),
+                );
+            }
+
+            // Micro-op proxy: per-instruction delta in per-chip trace heights.
+            let curr_trace_heights = self
+                .chip_complex
+                .dynamic_trace_heights()
+                .collect::<Vec<_>>();
+            fuzzer_utils::print_micro_ops_deltas(&self.air_names, &prev_trace_heights, &curr_trace_heights);
+            prev_trace_heights = curr_trace_heights;
+
+            fuzzer_utils::print_trace_info();
+            fuzzer_utils::inc_step();
+
+            if did_terminate {
+                break;
+            }
 
             if self.should_segment() {
                 self.chip_complex
@@ -375,14 +621,6 @@ impl<F: PrimeField32, VC: VmConfig<F>> ExecutionSegment<F, VC> {
                     .end(ExecutionState::new(pc, timestamp), None);
                 break;
             }
-
-
-            // <----------------------- START OF FAULT INJECTION ----------------------->
-
-            fuzzer_utils::print_trace_info();
-            fuzzer_utils::inc_step();
-
-            // <------------------------ END OF FAULT INJECTION ------------------------>
 
         }
         self.final_memory = Some(
