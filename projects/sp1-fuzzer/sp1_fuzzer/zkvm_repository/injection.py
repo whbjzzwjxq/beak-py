@@ -293,6 +293,116 @@ members = [
                 ],
             )
 
+    # Core machine trace generators are where padding/inactive rows (is_real=0) naturally exist.
+    # To support InactiveRowEffectsBucket, we sample a few padding rows and emit ChipRow +
+    # Interaction anchored to those inactive rows.
+    machine_toml_path = sp1_install_path / "crates" / "core" / "machine" / "Cargo.toml"
+    if machine_toml_path.exists():
+        machine_toml = machine_toml_path.read_text()
+        if "fuzzer_utils" not in machine_toml:
+            replace_in_file(
+                machine_toml_path,
+                [
+                    (
+                        r"\[dependencies\]",
+                        "[dependencies]\nfuzzer_utils = { workspace = true }",
+                    )
+                ],
+            )
+
+    def _inject_padding_sampling(*, path: Path, guard: str, anchor: str, chip_expr: str, real_rows_expr: str, total_rows_expr: str):
+        if not path.exists():
+            return
+        contents = path.read_text()
+        if guard in contents:
+            return
+        # Ensure `use fuzzer_utils;` exists.
+        if "use fuzzer_utils;" not in contents:
+            # Insert after initial use block.
+            header_end = contents.find("\n\n")
+            if header_end > 0:
+                contents = contents[:header_end] + "\n#[allow(unused_imports)]\nuse fuzzer_utils;\n" + contents[header_end:]
+        insert = """
+
+        // beak-fuzz: sample a few inactive (padding) rows for op-agnostic inactive-row analysis.
+        if fuzzer_utils::is_trace_logging() {{
+            // Group padding rows into their own op-span (not tied to any instruction).
+            fuzzer_utils::update_hints(0, "PADDING", "PADDING");
+            fuzzer_utils::inc_step();
+
+            let chip = __CHIP_EXPR__;
+            let real_rows: usize = (__REAL_ROWS_EXPR__) as usize;
+            let total_rows: usize = (__TOTAL_ROWS_EXPR__) as usize;
+            let max_samples: usize = 3;
+            let mut emitted: usize = 0;
+            let start = real_rows;
+            while emitted < max_samples && (start + emitted) < total_rows {{
+                let row_idx = start + emitted;
+                let gates = "{\\\"is_real\\\":0}";
+                let locals = format!(
+                    r#"{{"chip":"{}","row_idx":{},"real_rows":{},"total_rows":{}}}"#,
+                    chip, row_idx, real_rows, total_rows
+                );
+                fuzzer_utils::print_chip_row_json("sp1", &chip, gates, &locals);
+                let anchor_row_id = fuzzer_utils::get_last_row_id();
+                let payload = format!(r#"{{"chip":"{}","row_idx":{}}}"#, chip, row_idx);
+                // Emit an effectful interaction anchored to an inactive row (this is what
+                // InactiveRowEffectsBucket is designed to detect).
+                fuzzer_utils::print_interaction_json(
+                    "PaddingSample",
+                    "send",
+                    "inactive_row",
+                    &anchor_row_id,
+                    &payload,
+                    1,
+                    "const",
+                );
+                emitted += 1;
+            }}
+        }}
+"""
+        insert = (
+            insert.replace("__CHIP_EXPR__", chip_expr)
+            .replace("__REAL_ROWS_EXPR__", real_rows_expr)
+            .replace("__TOTAL_ROWS_EXPR__", total_rows_expr)
+        )
+        idx = contents.find(anchor)
+        if idx < 0:
+            return
+        contents = contents[:idx] + insert + contents[idx:]
+        path.write_text(contents)
+
+    # CPU padding rows.
+    _inject_padding_sampling(
+        path=sp1_install_path / "crates" / "core" / "machine" / "src" / "cpu" / "trace.rs",
+        guard="PaddingSample",
+        anchor="        // Convert the trace to a row major matrix.",
+        chip_expr="\"Cpu\".to_string()",
+        real_rows_expr="n_real_rows",
+        total_rows_expr="padded_nb_rows",
+    )
+
+    # MemoryLocal padding rows.
+    _inject_padding_sampling(
+        path=sp1_install_path / "crates" / "core" / "machine" / "src" / "memory" / "local.rs",
+        guard="PaddingSample",
+        anchor="        // Convert the trace to a row major matrix.",
+        chip_expr="\"MemoryLocal\".to_string()",
+        real_rows_expr="nb_rows",
+        total_rows_expr="padded_nb_rows",
+    )
+
+    # MemoryGlobal padding rows (Initialize/Finalize).
+    _inject_padding_sampling(
+        path=sp1_install_path / "crates" / "core" / "machine" / "src" / "memory" / "global.rs",
+        guard="PaddingSample",
+        # Insert right before returning the row-major matrix so `rows.len()` reflects padding.
+        anchor="        RowMajorMatrix::new(",
+        chip_expr="format!(\"MemoryGlobal({:?})\", self.kind)",
+        real_rows_expr="memory_events.len()",
+        total_rows_expr="rows.len()",
+    )
+
     # Inject executor behavior.
     #
     # Older SP1 snapshots have incompatible `executor.rs` layouts, so we avoid overwriting the

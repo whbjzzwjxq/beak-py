@@ -463,13 +463,20 @@ def generate_project_from_instructions(*, out_root: Path, sp1_path: Path, lines:
             sp1_sdk::utils::setup_logger();
             let trace = std::env::args().any(|arg| arg == "--trace");
             fuzzer_utils::set_trace_logging(trace);
+            // Disable fixed-shape enforcement so core proving works for arbitrary small programs.
+            // We only need trace generation here (for padding-row sampling), not shape validation.
+            std::env::set_var("FIX_CORE_SHAPES", "false");
 
             println!("<record>{{}}</record>", json!({{"context":"Executor","status":"start"}}));
             let timer = Instant::now();
             let client = ProverClient::new();
             let stdin = create_sp1_stdin();
             let elf = fs::read(SP1_GUEST_PATH).expect("read guest elf");
-            let (mut public_values, _report) = client.execute(&elf, stdin).run().unwrap();
+            // NOTE: `execute()` does not build chip traces, so padding rows (is_real=0) won't
+            // exist yet. Use a core proof to force trace generation so we can sample inactive rows.
+            let (pk, _vk) = client.setup(&elf);
+            let proof = client.prove(&pk, stdin).core().run().unwrap();
+            let mut public_values = proof.public_values;
 
             let mut outputs: Vec<u32> = Vec::new();
             for _ in 0..{output_word_count} {{
@@ -558,6 +565,11 @@ def main() -> int:
     run = run_sp1_project(project_root)
     print(f"project_root={project_root}")
     print(f"exit={run.returncode}")
+
+    # Always persist stdout/stderr for debugging, even if downstream trace parsing fails.
+    (project_root / "sp1_run.stdout.txt").write_text(run.stdout)
+    (project_root / "sp1_run.stderr.txt").write_text(run.stderr)
+
     if run.returncode != 0:
         tail = "\n".join(run.stderr.splitlines()[-30:])
         print("stderr tail:")
@@ -566,7 +578,13 @@ def main() -> int:
         return run.returncode
 
     records = _extract_record_json(run.stdout)
-    trace = build_trace_from_records(records)
+    try:
+        trace = build_trace_from_records(records)
+    except Exception as e:
+        # Still write extracted records so we can inspect what broke.
+        write_run_artifacts(project_root=project_root, run=run, records=records, hits=[])
+        raise
+
     hits = run_buckets(trace, sp1_commit=args.sp1_commit)
     write_run_artifacts(project_root=project_root, run=run, records=records, hits=hits)
 
