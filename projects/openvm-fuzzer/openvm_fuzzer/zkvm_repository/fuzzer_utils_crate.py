@@ -27,6 +27,7 @@ def create_lib_rs(root: Path):
     create_file(
         root / "crates" / "fuzzer_utils" / "src" / "lib.rs",
         """use std::sync::Mutex;
+use std::collections::HashMap;
 use lazy_static::lazy_static;
 use openvm_stark_backend::p3_field::{Field, PrimeField32};
 
@@ -73,6 +74,7 @@ pub struct GlobalState {
     pub seed: u64,
     pub step: u64,
     pub micro_idx: u32,
+    pub row_seq: u64,
     pub injection_kind: String,
     pub injection_step: u64,
     pub rng: StdRng,
@@ -80,6 +82,10 @@ pub struct GlobalState {
     pub hint_assembly: String,  // the default is an empty string
     pub hint_pc: u32,  // the default is an empty string
     pub last_row_id: String,
+    pub pc_to_step: HashMap<u32, u64>,
+    pub pc_to_instruction: HashMap<u32, String>,
+    pub pc_to_assembly: HashMap<u32, String>,
+    pub current_air_name: String,
 }
 
 impl GlobalState {
@@ -92,12 +98,17 @@ impl GlobalState {
             injection_kind: String::new(),
             step: 0,
             micro_idx: 0,
+            row_seq: 0,
             injection_step: 0,
             rng: StdRng::seed_from_u64(0),
             hint_instruction: String::new(),
             hint_assembly: String::new(),
             hint_pc: 0,
             last_row_id: String::new(),
+            pc_to_step: HashMap::new(),
+            pc_to_instruction: HashMap::new(),
+            pc_to_assembly: HashMap::new(),
+            current_air_name: String::new(),
         }
     }
 }
@@ -246,6 +257,49 @@ pub fn update_hints(pc: u32, instruction: &String, assembly: &String) {
     state.hint_instruction = instruction.clone();
     state.hint_assembly = assembly.clone();
     state.micro_idx = 0;
+}
+
+/// Record the mapping from `pc` -> current `step` (instruction index).
+/// This is used to reconstruct per-instruction step indices during tracegen (fill_trace_row),
+/// where we only have access to AIR records (which typically include `from_pc`).
+pub fn record_pc_step(pc: u32) {
+    let mut state = GLOBAL_STATE.lock().unwrap();
+    let step = state.step;
+    state.pc_to_step.insert(pc, step);
+}
+
+pub fn record_pc_hints(pc: u32) {
+    let mut state = GLOBAL_STATE.lock().unwrap();
+    let instr = state.hint_instruction.clone();
+    let asm = state.hint_assembly.clone();
+    state.pc_to_instruction.insert(pc, instr);
+    state.pc_to_assembly.insert(pc, asm);
+}
+
+/// Best-effort: set the global `step` based on `pc` (if previously recorded),
+/// and reset per-op micro index so tracegen-emitted micro-ops get stable `row_id`s.
+pub fn set_step_from_pc(pc: u32) {
+    let mut state = GLOBAL_STATE.lock().unwrap();
+    if let Some(step) = state.pc_to_step.get(&pc).copied() {
+        state.step = step;
+    }
+    if let Some(instr) = state.pc_to_instruction.get(&pc).cloned() {
+        state.hint_instruction = instr;
+    }
+    if let Some(asm) = state.pc_to_assembly.get(&pc).cloned() {
+        state.hint_assembly = asm;
+    }
+    state.hint_pc = pc;
+}
+
+pub fn set_current_air_name(value: &str) {
+    let mut state = GLOBAL_STATE.lock().unwrap();
+    state.current_air_name = value.to_string();
+}
+
+pub fn get_current_air_name() -> String {
+    let state = GLOBAL_STATE.lock().unwrap();
+    state.current_air_name.clone()
 }
 
 ////////////////
@@ -513,7 +567,9 @@ pub fn print_chip_row_json(domain: &str, chip: &String, gates_json: &str, locals
 
     let uop_idx = state.micro_idx;
     state.micro_idx = state.micro_idx.wrapping_add(1);
-    let row_id = format!("openvm:{}:{}", state.step, uop_idx);
+    let row_seq = state.row_seq;
+    state.row_seq = state.row_seq.wrapping_add(1);
+    let row_id = format!("openvm:{}:{}:{}", state.step, uop_idx, row_seq);
     state.last_row_id = row_id.clone();
 
     println!(

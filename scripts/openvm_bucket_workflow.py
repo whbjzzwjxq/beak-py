@@ -232,19 +232,20 @@ def run_buckets(trace, *, openvm_commit: str):
 
     # OpenVM control-flow candidates:
     # - audit-* snapshots emit adapter/core ChipRows, so we can match specific adapter chips.
-    # - regzero snapshot currently emits connector edges per op; use that as a coarse proxy so
-    #   the next-pc bucket can still run end-to-end.
-    # TODO(beak-fuzz): Once regzero injection is moved down into the rv32im trace fill stage and
-    # emits real adapter/core ChipRows (e.g. `Rv32JalrAdapterAir` / `Rv32BranchAdapterAir`), switch
-    # the regzero `NextPcUnderconstrainedBucket` matcher to those concrete chips instead of
-    # `VmConnectorAir` (or to `Exec(JALR)` / `Exec(BEQ)` if we keep executor-granularity chips).
+    # - regzero snapshot now emits adapter ChipRows from rv32im `fill_trace_row` instrumentation,
+    #   so we can match concrete adapter chips there as well.
     if openvm_commit == OPENVM_REGZERO_COMMIT:
         nextpc_buckets = [
             NextPcUnderconstrainedBucket(
-                instruction_label="openvm.VmConnectorAir",
-                chip="VmConnectorAir",
+                instruction_label="openvm.Rv32JalrAdapterAir",
+                chip="Rv32JalrAdapterAir",
                 min_following_instructions=2,
-            )
+            ),
+            NextPcUnderconstrainedBucket(
+                instruction_label="openvm.Rv32BranchAdapterAir",
+                chip="Rv32BranchAdapterAir",
+                min_following_instructions=2,
+            ),
         ]
     else:
         nextpc_buckets = [
