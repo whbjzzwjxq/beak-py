@@ -9,7 +9,7 @@ import sys
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 
 def _repo_root() -> Path:
@@ -54,7 +54,7 @@ def write_run_artifacts(
     project_root: Path,
     run: RunResult,
     records: list[dict[str, Any]],
-    hits: list[dict[str, Any]],
+    hits: Optional[list[dict[str, Any]]],
 ) -> None:
     """
     Convenience artifacts for inspection:
@@ -68,7 +68,11 @@ def write_run_artifacts(
     (project_root / "openvm_run.stderr.txt").write_text(run.stderr)
     micro_op_records = [r for r in records if r.get("context") == "micro_op"]
     (project_root / "micro_op_records.json").write_text(json.dumps(micro_op_records, indent=2, sort_keys=True))
-    (project_root / "bucket_hits.json").write_text(json.dumps(hits, indent=2, sort_keys=True, default=str))
+    bucket_hits_path = project_root / "bucket_hits.json"
+    if hits is not None:
+        bucket_hits_path.write_text(json.dumps(hits, indent=2, sort_keys=True, default=str))
+    elif bucket_hits_path.exists():
+        bucket_hits_path.unlink()
 
 
 def _ensure_writable_cargo_home() -> Path:
@@ -695,6 +699,14 @@ def main() -> int:
         action="store_true",
         help="Do not write run artifacts (stdout/stderr/records/hits) into the project root.",
     )
+    ap.add_argument(
+        "--trace-only",
+        action="store_true",
+        help=(
+            "Trace mode: run and export micro_op_records.json only (skip bucket matching and do not write "
+            "bucket_hits.json)."
+        ),
+    )
     args = ap.parse_args()
     _add_repo_to_syspath()
     from openvm_fuzzer.settings import resolve_openvm_commit  # type: ignore
@@ -721,7 +733,7 @@ def main() -> int:
     run = run_openvm_project(project_root)
     if run.returncode != 0:
         if not args.no_write_artifacts:
-            write_run_artifacts(project_root=project_root, run=run, records=[], hits=[])
+            write_run_artifacts(project_root=project_root, run=run, records=[], hits=[] if not args.trace_only else None)
         print(f"project_root={project_root}")
         print(f"exit={run.returncode}")
         print("stderr tail:")
@@ -732,11 +744,29 @@ def main() -> int:
     records = _extract_record_json(run.stdout)
     if not records:
         if not args.no_write_artifacts:
-            write_run_artifacts(project_root=project_root, run=run, records=[], hits=[])
+            write_run_artifacts(project_root=project_root, run=run, records=[], hits=[] if not args.trace_only else None)
         raise RuntimeError(
             "no <record> json objects found in stdout. "
             f"project_root={project_root} (see openvm_run.stdout.txt / openvm_run.stderr.txt)"
         )
+    micro_op_records = [r for r in records if r.get("context") == "micro_op"]
+    if args.trace_only:
+        if not args.no_write_artifacts:
+            write_run_artifacts(project_root=project_root, run=run, records=records, hits=None)
+        print(f"project_root={project_root}")
+        print(f"exit={run.returncode}")
+        print(f"trace_mode=on micro_op_records={len(micro_op_records)}")
+        manifest = {
+            "mode": "trace_only",
+            "project_root": str(project_root),
+            "micro_op_records_path": str(project_root / "micro_op_records.json"),
+            "stdout_path": str(project_root / "openvm_run.stdout.txt"),
+            "stderr_path": str(project_root / "openvm_run.stderr.txt"),
+            "micro_op_record_count": len(micro_op_records),
+        }
+        print(json.dumps(manifest))
+        return 0
+
     trace = build_trace_from_records(records)
     hits = run_buckets(trace, openvm_commit=commit)
     if not args.no_write_artifacts:

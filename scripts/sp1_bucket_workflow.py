@@ -9,7 +9,7 @@ import sys
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 
 def _repo_root() -> Path:
@@ -54,14 +54,18 @@ def write_run_artifacts(
     project_root: Path,
     run: RunResult,
     records: list[dict[str, Any]],
-    hits: list[dict[str, Any]],
+    hits: Optional[list[dict[str, Any]]],
 ) -> None:
     project_root.mkdir(parents=True, exist_ok=True)
     (project_root / "sp1_run.stdout.txt").write_text(run.stdout)
     (project_root / "sp1_run.stderr.txt").write_text(run.stderr)
     micro_op_records = [r for r in records if r.get("context") == "micro_op"]
     (project_root / "micro_op_records.json").write_text(json.dumps(micro_op_records, indent=2, sort_keys=True))
-    (project_root / "bucket_hits.json").write_text(json.dumps(hits, indent=2, sort_keys=True, default=str))
+    bucket_hits_path = project_root / "bucket_hits.json"
+    if hits is not None:
+        bucket_hits_path.write_text(json.dumps(hits, indent=2, sort_keys=True, default=str))
+    elif bucket_hits_path.exists():
+        bucket_hits_path.unlink()
 
 
 def _ensure_writable_cargo_home() -> Path:
@@ -551,6 +555,14 @@ def main() -> int:
     ap.add_argument("--sp1-commit", required=True, help="commit hash or alias (s26/s27/s29)")
     ap.add_argument("--install-sp1", action="store_true", help="install+inject SP1 snapshot into out/")
     ap.add_argument("--instructions-file", required=True)
+    ap.add_argument(
+        "--trace-only",
+        action="store_true",
+        help=(
+            "Trace mode: run and export micro_op_records.json only (skip bucket matching and do not write "
+            "bucket_hits.json)."
+        ),
+    )
     args = ap.parse_args()
 
     out_base = _repo_root() / "beak-fuzz" / "out"
@@ -574,10 +586,25 @@ def main() -> int:
         tail = "\n".join(run.stderr.splitlines()[-30:])
         print("stderr tail:")
         print(tail)
-        write_run_artifacts(project_root=project_root, run=run, records=[], hits=[])
+        write_run_artifacts(project_root=project_root, run=run, records=[], hits=[] if not args.trace_only else None)
         return run.returncode
 
     records = _extract_record_json(run.stdout)
+    micro_op_records = [r for r in records if r.get("context") == "micro_op"]
+    if args.trace_only:
+        write_run_artifacts(project_root=project_root, run=run, records=records, hits=None)
+        print(f"trace_mode=on micro_op_records={len(micro_op_records)}")
+        manifest = {
+            "mode": "trace_only",
+            "project_root": str(project_root),
+            "micro_op_records_path": str(project_root / "micro_op_records.json"),
+            "stdout_path": str(project_root / "sp1_run.stdout.txt"),
+            "stderr_path": str(project_root / "sp1_run.stderr.txt"),
+            "micro_op_record_count": len(micro_op_records),
+        }
+        print(json.dumps(manifest))
+        return 0
+
     try:
         trace = build_trace_from_records(records)
     except Exception as e:
