@@ -49,7 +49,7 @@ class ChipRowItem:
     domain: str
     chip: str
     gates: dict[str, Any]
-    locals: dict[str, Any]
+    values: dict[str, Any]
 
 @dataclass(frozen=True)
 class InteractionItem:
@@ -138,7 +138,7 @@ def run_openvm_and_collect(project_root: Path) -> tuple[list[MicroOpRow], list[C
             domain = rec.get("domain")
             chip = rec.get("chip")
             gates = rec.get("gates")
-            locals_ = rec.get("locals")
+            values = rec.get("values")
             if not isinstance(step, int) or not isinstance(pc, int):
                 continue
             if (
@@ -151,8 +151,8 @@ def run_openvm_and_collect(project_root: Path) -> tuple[list[MicroOpRow], list[C
                 continue
             if not isinstance(gates, dict):
                 gates = {}
-            if not isinstance(locals_, dict):
-                locals_ = {}
+            if not isinstance(values, dict):
+                values = {}
             chip_rows.append(
                 ChipRowItem(
                     step=step,
@@ -163,7 +163,7 @@ def run_openvm_and_collect(project_root: Path) -> tuple[list[MicroOpRow], list[C
                     domain=domain,
                     chip=chip,
                     gates=gates,
-                    locals=locals_,
+                    values=values,
                 )
             )
         elif ctx == "micro_op" and rec.get("micro_op_type") == "interaction":
@@ -302,14 +302,14 @@ def render_markdown(
             lines.append("")
             for i, u in enumerate(rows):
                 stage = None
-                if isinstance(u.locals, dict):
-                    stage = u.locals.get("stage")
+                if isinstance(u.values, dict):
+                    stage = u.values.get("stage")
                 stage_s = "" if not isinstance(stage, str) else f" ({stage})"
                 lines.append(f"<details><summary>uop {i}: <code>{u.chip}</code>{stage_s}</summary>")
                 lines.append("")
                 try:
                     pretty = json.dumps(
-                        {"row_id": u.row_id, "domain": u.domain, "gates": u.gates, "locals": u.locals},
+                        {"row_id": u.row_id, "domain": u.domain, "gates": u.gates, "values": u.values},
                         indent=2,
                         sort_keys=True,
                     )

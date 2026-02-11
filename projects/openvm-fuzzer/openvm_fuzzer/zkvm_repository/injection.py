@@ -485,31 +485,17 @@ def _patch_audit_integration_api_for_padding_samples(openvm_install_path: Path) 
     if 'let chip = format!("VmChipWrapper{}", self.air_name());' in contents:
         contents = contents.replace(
             'let chip = format!("VmChipWrapper{}", self.air_name());',
-            "let chip = beak_padding_chip.clone();",
+            'let chip = "VmChipWrapper".to_string();',
         )
         integration_api.write_text(contents)
         contents = integration_api.read_text()
 
-    # Ensure we declare `beak_padding_chip` before `self.records` is moved.
-    if (
-        "beak_padding_chip.clone()" in contents
-        and "let beak_padding_chip" not in contents
-        and "let memory = self.offline_memory.lock().unwrap();" in contents
-    ):
-        m = re.search(
-            r"^(\s*)let memory = self\.offline_memory\.lock\(\)\.unwrap\(\);\s*$",
-            contents,
-            flags=re.MULTILINE,
+    # Repair older insertion that references `beak_padding_chip` without declaration.
+    if "let chip = beak_padding_chip.clone();" in contents:
+        contents = contents.replace(
+            "let chip = beak_padding_chip.clone();",
+            'let chip = "VmChipWrapper".to_string();',
         )
-        if m:
-            indent = m.group(1)
-            decl = f'{indent}let beak_padding_chip = format!("VmChipWrapper{{}}", self.air_name());'
-            contents = contents[: m.end()] + "\n\n" + decl + contents[m.end() :]
-        else:
-            contents = contents.replace(
-                "let memory = self.offline_memory.lock().unwrap();",
-                "let memory = self.offline_memory.lock().unwrap();\n\n        let beak_padding_chip = format!(\"VmChipWrapper{}\", self.air_name());",
-            )
         integration_api.write_text(contents)
         contents = integration_api.read_text()
 
@@ -541,7 +527,7 @@ def _patch_audit_integration_api_for_padding_samples(openvm_install_path: Path) 
             fuzzer_utils::update_hints(0, &hint, &hint);
             fuzzer_utils::inc_step();
 
-            let chip = beak_padding_chip.clone();
+            let chip = "VmChipWrapper".to_string();
             let max_samples: usize = 3;
             let mut emitted: usize = 0;
             while emitted < max_samples && (num_records + emitted) < height {

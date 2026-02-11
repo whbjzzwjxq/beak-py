@@ -559,7 +559,7 @@ pub fn print_micro_op_json(chip: &String, payload_json: &String) {
     );
 }
 
-pub fn print_chip_row_json(domain: &str, chip: &String, gates_json: &str, locals_json: &str) {
+pub fn print_chip_row_json(domain: &str, chip: &String, gates_json: &str, values_json: &str) {
     let mut state = GLOBAL_STATE.lock().unwrap();
     if !state.trace_logging {
         return;
@@ -584,7 +584,7 @@ pub fn print_chip_row_json(domain: &str, chip: &String, gates_json: &str, locals
             \\"domain\\":\\"{}\\", \\
             \\"chip\\":\\"{}\\", \\
             \\"gates\\":{}, \\
-            \\"locals\\":{}\\
+            \\"values\\":{}\\
         }}</record>",
         state.step,
         state.hint_pc,
@@ -594,7 +594,7 @@ pub fn print_chip_row_json(domain: &str, chip: &String, gates_json: &str, locals
         escape_json_string(domain),
         escape_json_string(chip),
         gates_json,
-        locals_json,
+        values_json,
     );
 }
 

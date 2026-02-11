@@ -204,7 +204,7 @@ fn escape_json_string(s: &str) -> String {
     out
 }
 
-pub fn print_chip_row_json(domain: &str, chip: &str, gates_json: &str, locals_json: &str) {
+pub fn print_chip_row_json(domain: &str, chip: &str, gates_json: &str, values_json: &str) {
     let mut state = GLOBAL_STATE.lock().unwrap();
     if !state.trace_logging {
         return;
@@ -217,7 +217,7 @@ pub fn print_chip_row_json(domain: &str, chip: &str, gates_json: &str, locals_js
     state.last_row_id = row_id.clone();
 
     let record = format!(
-        r#\"{{\"context\":\"micro_op\",\"micro_op_type\":\"chip_row\",\"step\":{},\"pc\":{},\"instruction\":\"{}\",\"assembly\":\"{}\",\"row_id\":\"{}\",\"domain\":\"{}\",\"chip\":\"{}\",\"gates\":{},\"locals\":{}}}\"#,
+        r#\"{{\"context\":\"micro_op\",\"micro_op_type\":\"chip_row\",\"step\":{},\"pc\":{},\"instruction\":\"{}\",\"assembly\":\"{}\",\"row_id\":\"{}\",\"domain\":\"{}\",\"chip\":\"{}\",\"gates\":{},\"values\":{}}}\"#,
         state.step,
         state.pc_hint,
         escape_json_string(&state.instruction_hint),
@@ -226,7 +226,7 @@ pub fn print_chip_row_json(domain: &str, chip: &str, gates_json: &str, locals_js
         escape_json_string(domain),
         escape_json_string(chip),
         gates_json,
-        locals_json,
+        values_json,
     );
     println!(\"<record>{}</record>\", record);
 }

@@ -1,16 +1,16 @@
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence
+from typing import ClassVar, Dict, List, Optional, Sequence
 
 from enum import Enum
 
 FieldElement = int
 
-PossibleBooleanElement = FieldElement
+PossibleBooleanElement = int
 
-PossibleFieldElement = FieldElement | str
+PossibleFieldElement = int
 
-GateValue = int | str
+GateValue = int
 
 
 class InteractionType(str, Enum):
@@ -65,13 +65,26 @@ class MemorySize(str, Enum):
         return 4
 
 
+class ChipRowKind(str, Enum):
+    # Coarse, cross-vm chip-row semantics.
+    PROGRAM = "program"
+    CONTROL_FLOW = "control_flow"
+    ALU = "alu"
+    MEMORY = "memory"
+    CONNECTOR = "connector"
+    CPU = "cpu"
+    HASH = "hash"
+    SYSCALL = "syscall"
+    CUSTOM = "custom"
+
+
 @dataclass
 class ChipRow:
     """
     A first-class "row semantics" object.
 
-    This represents a single row in a zkVM AIR/chip trace, including its gating
-    signals and any row-local values you want to expose to buckets/injections.
+    This represents shared identity/gating metadata for a single row in a zkVM
+    AIR/chip trace. Kind-specific semantic attributes live on concrete subclasses.
 
     ChipRow is intentionally *not* an Interaction: interactions are sent/recv
     messages used for cross-table balancing, while ChipRow captures per-chip
@@ -82,8 +95,139 @@ class ChipRow:
     domain: str
     chip: str
     gates: Dict[str, GateValue] = field(default_factory=dict)
-    locals: Dict[str, PossibleFieldElement] = field(default_factory=dict)
     event_id: Optional[str] = None
+    KIND: ClassVar[ChipRowKind] = ChipRowKind.CUSTOM
+
+    @property
+    def kind(self) -> ChipRowKind:
+        return type(self).KIND
+
+
+@dataclass
+class ProgramChipRow(ChipRow):
+    KIND: ClassVar[ChipRowKind] = ChipRowKind.PROGRAM
+    pc: Optional[FieldElement] = None
+    opcode: Optional[PossibleFieldElement] = None
+    op_a: Optional[FieldElement] = None
+    op_b: Optional[FieldElement] = None
+    op_c: Optional[FieldElement] = None
+    imm_b: Optional[bool] = None
+    imm_c: Optional[bool] = None
+
+
+@dataclass
+class ControlFlowChipRow(ChipRow):
+    KIND: ClassVar[ChipRowKind] = ChipRowKind.CONTROL_FLOW
+    pc: Optional[FieldElement] = None
+    next_pc: Optional[FieldElement] = None
+    from_pc: Optional[FieldElement] = None
+    to_pc: Optional[FieldElement] = None
+    from_timestamp: Optional[FieldElement] = None
+    to_timestamp: Optional[FieldElement] = None
+    opcode: Optional[PossibleFieldElement] = None
+    clk: Optional[FieldElement] = None
+    op_a: Optional[FieldElement] = None
+    op_b: Optional[FieldElement] = None
+    op_c: Optional[FieldElement] = None
+    imm_b: Optional[bool] = None
+    imm_c: Optional[bool] = None
+
+
+@dataclass
+class AluChipRow(ChipRow):
+    KIND: ClassVar[ChipRowKind] = ChipRowKind.ALU
+    pc: Optional[FieldElement] = None
+    clk: Optional[FieldElement] = None
+    opcode: Optional[PossibleFieldElement] = None
+    rd: Optional[FieldElement] = None
+    rs1: Optional[FieldElement] = None
+    rs2: Optional[FieldElement] = None
+    imm: Optional[PossibleFieldElement] = None
+    value: Optional[PossibleFieldElement] = None
+    op_a: Optional[FieldElement] = None
+    op_b: Optional[FieldElement] = None
+    op_c: Optional[FieldElement] = None
+    imm_b: Optional[bool] = None
+    imm_c: Optional[bool] = None
+
+
+@dataclass
+class MemoryChipRow(ChipRow):
+    KIND: ClassVar[ChipRowKind] = ChipRowKind.MEMORY
+    pc: Optional[FieldElement] = None
+    clk: Optional[FieldElement] = None
+    opcode: Optional[PossibleFieldElement] = None
+    from_pc: Optional[FieldElement] = None
+    to_pc: Optional[FieldElement] = None
+    from_timestamp: Optional[FieldElement] = None
+    to_timestamp: Optional[FieldElement] = None
+    addr: Optional[FieldElement] = None
+    value: Optional[PossibleFieldElement] = None
+    size_bytes: Optional[FieldElement] = None
+    space: Optional[PossibleFieldElement] = None
+    is_write: Optional[PossibleBooleanElement] = None
+    rd: Optional[FieldElement] = None
+    rs1: Optional[FieldElement] = None
+    rs2: Optional[FieldElement] = None
+    op_a: Optional[FieldElement] = None
+    op_b: Optional[FieldElement] = None
+    op_c: Optional[FieldElement] = None
+    imm_b: Optional[bool] = None
+    imm_c: Optional[bool] = None
+    record_id: Optional[FieldElement] = None
+    length: Optional[FieldElement] = None
+    access_count: Optional[FieldElement] = None
+
+
+@dataclass
+class ConnectorChipRow(ChipRow):
+    KIND: ClassVar[ChipRowKind] = ChipRowKind.CONNECTOR
+    pc: Optional[FieldElement] = None
+    from_pc: Optional[FieldElement] = None
+    to_pc: Optional[FieldElement] = None
+    timestamp: Optional[FieldElement] = None
+    from_timestamp: Optional[FieldElement] = None
+    to_timestamp: Optional[FieldElement] = None
+    access_count: Optional[FieldElement] = None
+    width: Optional[FieldElement] = None
+
+
+@dataclass
+class CpuChipRow(ChipRow):
+    KIND: ClassVar[ChipRowKind] = ChipRowKind.CPU
+    pc: Optional[FieldElement] = None
+    clk: Optional[FieldElement] = None
+    opcode: Optional[PossibleFieldElement] = None
+    op_a: Optional[FieldElement] = None
+    op_b: Optional[FieldElement] = None
+    op_c: Optional[FieldElement] = None
+    imm_b: Optional[bool] = None
+    imm_c: Optional[bool] = None
+
+
+@dataclass
+class HashChipRow(ChipRow):
+    KIND: ClassVar[ChipRowKind] = ChipRowKind.HASH
+    pc: Optional[FieldElement] = None
+    clk: Optional[FieldElement] = None
+    opcode: Optional[PossibleFieldElement] = None
+    value: Optional[PossibleFieldElement] = None
+
+
+@dataclass
+class SyscallChipRow(ChipRow):
+    KIND: ClassVar[ChipRowKind] = ChipRowKind.SYSCALL
+    pc: Optional[FieldElement] = None
+    clk: Optional[FieldElement] = None
+    opcode: Optional[PossibleFieldElement] = None
+    syscall_id: Optional[FieldElement] = None
+
+
+@dataclass
+class CustomChipRow(ChipRow):
+    KIND: ClassVar[ChipRowKind] = ChipRowKind.CUSTOM
+    pc: Optional[FieldElement] = None
+    opcode: Optional[PossibleFieldElement] = None
 
 
 def _encode_memory_space(space: MemorySpace) -> int:
@@ -107,7 +251,7 @@ class InteractionMultiplicity:
     # Optional provenance for multiplicity when it is derived from a specific trace field.
     #
     # This lets buckets/injections distinguish "same numeric value" vs "same underlying field".
-    # Convention: "gates.<key>" or "locals.<key>" on the anchor row (e.g. "gates.is_real").
+    # Convention: "gates.<key>" or "<attr>" on the anchor row.
     ref: Optional[str] = None
 
 
@@ -456,6 +600,9 @@ class ZKVMTrace:
             self.interactions_by_table.setdefault(uop.table_id, []).append(uop)
 
         self.chip_rows_by_id: Dict[str, ChipRow] = {r.row_id: r for r in self.chip_rows}
+        self.chip_rows_by_kind: OrderedDict[ChipRowKind, List[ChipRow]] = OrderedDict()
+        for row in self.chip_rows:
+            self.chip_rows_by_kind.setdefault(row.kind, []).append(row)
 
         self.interactions_by_anchor_row_id: OrderedDict[str, List[InteractionBase]] = OrderedDict()
         for uop in self.interactions:
@@ -468,6 +615,9 @@ class ZKVMTrace:
 
     def chip_row(self, row_id: str) -> Optional[ChipRow]:
         return self.chip_rows_by_id.get(row_id)
+
+    def chip_rows_of_kind(self, kind: ChipRowKind) -> List[ChipRow]:
+        return self.chip_rows_by_kind.get(kind, [])
 
     def by_anchor_row_id(self, row_id: str) -> List[InteractionBase]:
         return self.interactions_by_anchor_row_id.get(row_id, [])

@@ -486,7 +486,17 @@ members = [
 \1    fuzzer_utils::update_hints(pc, &asm, &asm);
 \1    let chip = format!("Exec({:?})", instruction.opcode);
 \1    let gates = "{\"is_real\":1}";
-\1    let locals = format!("{{\"pc\":{},\"clk\":{},\"opcode\":\"{:?}\"}}", pc, self.state.clk, instruction.opcode);
+\1    let locals = format!(
+\1        "{{\"pc\":{},\"clk\":{},\"opcode\":\"{:?}\",\"op_a\":{},\"op_b\":{},\"op_c\":{},\"imm_b\":{},\"imm_c\":{}}}",
+\1        pc,
+\1        self.state.clk,
+\1        instruction.opcode,
+\1        instruction.op_a,
+\1        instruction.op_b,
+\1        instruction.op_c,
+\1        instruction.imm_b,
+\1        instruction.imm_c
+\1    );
 \1    fuzzer_utils::print_chip_row_json("sp1", &chip, gates, &locals);
 \1
 \1    // Program semantics (pc -> opcode/operands) as an anchored interaction.

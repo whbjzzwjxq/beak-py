@@ -212,11 +212,11 @@ class InactiveRowEffectsBucket(Bucket):
         *,
         activation_gate: str = "is_real",
         effect_gate_keys: Optional[List[str]] = None,
-        effect_local_keys: Optional[List[str]] = None,
+        effect_attr_keys: Optional[List[str]] = None,
     ):
         self._activation_gate = activation_gate
         self._effect_gate_keys = effect_gate_keys or []
-        self._effect_local_keys = effect_local_keys or []
+        self._effect_attr_keys = effect_attr_keys or []
 
     def get_type(self) -> BucketType:
         return BucketType.INACTIVE_ROW_SIDE_EFFECTS
@@ -281,12 +281,11 @@ class InactiveRowEffectsBucket(Bucket):
                     if k in gates and self._is_activated(gates.get(k)) is True:
                         flagged.append({"source": "gates", "key": k, "value": gates.get(k)})
                         break
-            locals_ = getattr(uop, "locals", None)
-            if isinstance(locals_, dict):
-                for k in self._effect_local_keys:
-                    if k in locals_ and self._is_activated(locals_.get(k)) is True:
-                        flagged.append({"source": "locals", "key": k, "value": locals_.get(k)})
-                        break
+            for k in self._effect_attr_keys:
+                v = getattr(uop, k, None)
+                if self._is_activated(v) is True:
+                    flagged.append({"source": "attrs", "key": k, "value": v})
+                    break
 
         if not effectful_interactions and not flagged:
             return None
