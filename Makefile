@@ -33,7 +33,7 @@ install: $(VIRTUALENV)
 
 install-openvm: $(VIRTUALENV)
 	uv sync --package openvm-fuzzer
-	$(UV_RUN) openvm-fuzzer install --commit-or-branch bmk-f038
+	$(UV_RUN) openvm-fuzzer install
 
 install-sp1: $(VIRTUALENV)
 	uv sync --package sp1-fuzzer

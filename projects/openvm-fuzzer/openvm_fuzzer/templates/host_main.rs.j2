@@ -1,6 +1,4 @@
-{% if requires_fuzzer_utils %}
 use fuzzer_utils;
-{% endif %}
 use std::sync::Arc;
 
 use openvm_build::GuestOptions;
@@ -10,6 +8,8 @@ use openvm_sdk::{
 };
 {% if use_generic_sdk %}
 use openvm_sdk::config::TranspilerConfig;
+use openvm_sdk::fs::{read_object_from_file, write_object_to_file};
+use openvm_sdk::keygen::AppProvingKey;
 use openvm_sdk::prover::verify_app_proof;
 {% endif %}
 
@@ -19,10 +19,8 @@ use std::time::Instant;
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-{% if is_trace_collection %}
     #[clap(long)]
     trace: bool,
-{% endif %}
 {% if is_fault_injection %}
     #[arg(long, requires_all=["inject_step", "inject_kind", "seed"])]
     #[clap(long)]
@@ -41,9 +39,19 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-{% if is_trace_collection %}
+    // Some OpenVM SDK operations can be stack-intensive on macOS (small default main-thread stack).
+    // Run the actual workload on a fresh thread with a larger stack to avoid stack overflows.
+    std::thread::Builder::new()
+        .name("openvm-host-main".to_string())
+        .stack_size(256 * 1024 * 1024)
+        .spawn(move || run(args))
+        .expect("spawn openvm-host-main thread")
+        .join()
+        .expect("openvm-host-main thread panicked");
+}
+
+fn run(args: Args) {
     fuzzer_utils::set_trace_logging(args.trace);
-{% endif %}
 {% if is_fault_injection %}
     fuzzer_utils::set_injection(args.inject);
     if args.inject {
@@ -103,9 +111,40 @@ fn main() {
     {% endfor %}
 
     {% if use_generic_sdk %}
+    // `Sdk` caches proving keys only in-memory (per-process). Persist the app proving key on disk
+    // so repeated runs avoid expensive key generation.
+    let app_pk_cache_path = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        // Tie the cache to the *circuit config*, not the program.
+        // (Different programs can share the same circuit; different circuit configs must not share keys.)
+        format!("{:?}", &vm_config).hash(&mut hasher);
+        format!("{:?}", &app_fri_params).hash(&mut hasher);
+        let cache_tag = format!("{:016x}", hasher.finish());
+
+        std::path::Path::new("target")
+            .join("openvm-sdk-cache")
+            .join(format!(
+                "app_pk_v{}_{}.bitcode",
+                openvm_sdk::OPENVM_VERSION,
+                cache_tag
+            ))
+    };
+    if let Ok(pk) = read_object_from_file::<AppProvingKey<_>, _>(&app_pk_cache_path) {
+        // Best effort: if a key is already set, we just keep the existing one.
+        let _ = sdk.set_app_pk(pk);
+    }
+
     let mut app_prover = sdk.app_prover(exe.clone()).expect("app prover");
     let app_commit = app_prover.app_commit();
-    let (_app_pk, app_vk) = sdk.app_keygen();
+    let app_pk = sdk.app_pk().clone();
+    let app_vk = app_pk.get_app_vk();
+    if !app_pk_cache_path.exists() {
+        // Best-effort write; if it fails we still have a valid key in-memory for this run.
+        let _ = write_object_to_file(&app_pk_cache_path, app_pk);
+    }
     {% else %}
     let app_config = AppConfig::new(app_fri_params.clone(), vm_config);
     let app_committed_exe = sdk.commit_app_exe(app_fri_params, exe).expect("commit app exe");

@@ -2,14 +2,7 @@
   "python.testing.pytestArgs": ["libs"],
   "python.testing.unittestEnabled": false,
   "python.testing.pytestEnabled": true,
-  "compareFolders.excludeFilter": [
-    "/.git",
-    "/.venv",
-    "/libs/zkvm-fuzzer-utils/zkvm_fuzzer_utils/__pycache__",
-    "/libs/zkvm-fuzzer-utils/zkvm_fuzzer_utils/rust/__pycache__",
-    "/libs/zkvm-fuzzer-utils/tests",
-    "/projects/jolt-fuzzer/jolt_fuzzer.egg-info"
-  ],
+  "compareFolders.excludeFilter": ["/.git", "/.venv"],
   "rust-analyzer.files.exclude": [
     "beak-fuzz",
     "docs",

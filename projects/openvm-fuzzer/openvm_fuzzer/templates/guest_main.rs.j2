@@ -45,24 +45,22 @@ pub fn main() {
     }
 
     // 3. Reveal final results back to Host using stream 0
-    {% for reg_idx in initial_regs.keys() %}
+    // Always include x0 (idx=0) so the host can validate it stayed zero.
     {% if use_reveal_u32 %}
-    reveal_u32({{ reg_idx }}, 0);
-    {% else %}
-    reveal({{ reg_idx }}, 0);
-    {% endif %}
-    {% if reg_idx == 0 %}
-    {% if use_reveal_u32 %}
+    reveal_u32(0, 0);
     reveal_u32(final_x0, 0);
     {% else %}
+    reveal(0, 0);
     reveal(final_x0, 0);
     {% endif %}
-    {% else %}
+
+    {% for reg_idx in initial_regs.keys() if reg_idx != 0 %}
     {% if use_reveal_u32 %}
+    reveal_u32({{ reg_idx }}, 0);
     reveal_u32(x{{ reg_idx }}, 0);
     {% else %}
+    reveal({{ reg_idx }}, 0);
     reveal(x{{ reg_idx }}, 0);
-    {% endif %}
     {% endif %}
     {% endfor %}
 }

@@ -5,9 +5,7 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.0", features = ["derive", "env"] }
-{% if requires_fuzzer_utils %}
 fuzzer_utils = { path = "{{ zkvm_path }}/crates/fuzzer_utils" }
-{% endif %}
 openvm = { path = "{{ zkvm_path }}/crates/toolchain/openvm" }
 openvm-sdk = { path = "{{ zkvm_path }}/crates/sdk" }
 openvm-build = { path = "{{ zkvm_path }}/crates/toolchain/build" }
