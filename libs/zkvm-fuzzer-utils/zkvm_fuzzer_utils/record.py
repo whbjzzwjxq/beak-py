@@ -109,25 +109,36 @@ def record_from_exec_status(exec_status: ExecStatus) -> Record:
 
 
 def micro_ops_entries(record: Record) -> list[dict[str, Any]]:
-    """Returns all parsed entries with context == 'micro_ops'."""
-    return [e.entries for e in record.get_entries_by_context("micro_ops")]
+    """
+    Return the raw JSON dicts of entries with context == \"micro_ops\".
+    This is kept for compatibility with historical trace-summary logs.
+    """
+    out: list[dict[str, Any]] = []
+    for e in record.get_entries_by_context("micro_ops"):
+        if isinstance(e.entries, dict):
+            out.append(e.entries)
+    return out
 
 
 def micro_ops_deltas_by_step(record: Record) -> dict[int, dict[str, int]]:
-    """Best-effort convenience helper to build {step: {chip_name: delta}}."""
-    out: dict[int, dict[str, int]] = {}
-    for entry in micro_ops_entries(record):
-        step = entry.get("step")
-        chips = entry.get("chips")
+    """
+    Summarize micro-op chip deltas by step.
+
+    Expects entries shaped like:
+      {\"context\":\"micro_ops\", \"step\": <int>, \"chips\": [{\"chip\": str, \"delta\": int}, ...]}
+    """
+    by_step: dict[int, dict[str, int]] = {}
+    for e in micro_ops_entries(record):
+        step = e.get("step")
+        chips = e.get("chips")
         if not isinstance(step, int) or not isinstance(chips, list):
             continue
-        step_map: dict[str, int] = {}
-        for chip_entry in chips:
-            if not isinstance(chip_entry, dict):
+        step_map = by_step.setdefault(step, {})
+        for c in chips:
+            if not isinstance(c, dict):
                 continue
-            name = chip_entry.get("chip")
-            delta = chip_entry.get("delta")
-            if isinstance(name, str) and isinstance(delta, int):
-                step_map[name] = delta
-        out[step] = step_map
-    return out
+            chip = c.get("chip")
+            delta = c.get("delta")
+            if isinstance(chip, str) and isinstance(delta, int):
+                step_map[chip] = delta
+    return by_step

@@ -27,9 +27,9 @@ EOF
 ### 2) 运行（3 个版本）
 
 ```bash
-python3 scripts/openvm_bucket_workflow.py --openvm-commit audit-f038 --install-openvm --instructions-file /tmp/openvm_insts.txt
-python3 scripts/openvm_bucket_workflow.py --openvm-commit audit-336  --install-openvm --instructions-file /tmp/openvm_insts.txt
-python3 scripts/openvm_bucket_workflow.py --openvm-commit regzero    --install-openvm --instructions-file /tmp/openvm_insts.txt
+uv run python scripts/openvm_bucket_workflow.py --openvm-commit bmk-f038 --install-openvm --instructions-file /tmp/openvm_insts.txt
+uv run python scripts/openvm_bucket_workflow.py --openvm-commit bmk-336f  --install-openvm --instructions-file /tmp/openvm_insts.txt
+uv run python scripts/openvm_bucket_workflow.py --openvm-commit bmk-regzero    --install-openvm --instructions-file /tmp/openvm_insts.txt
 ```
 
 ### 3) 输出位置（每个版本各自目录）

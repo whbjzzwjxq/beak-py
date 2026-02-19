@@ -6,7 +6,6 @@ requires-python = ">=3.10"
 members = [
     "beak-core",
     "beak-py",
-    "circil",
     "jolt-fuzzer",
     "nexus-fuzzer",
     "openvm-fuzzer",
@@ -47,7 +46,6 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "beak-core" },
-    { name = "circil" },
     { name = "jinja2" },
     { name = "jolt-fuzzer" },
     { name = "nexus-fuzzer" },
@@ -69,7 +67,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beak-core", editable = "libs/beak-core" },
-    { name = "circil", editable = "libs/circil" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "jolt-fuzzer", editable = "projects/jolt-fuzzer" },
     { name = "nexus-fuzzer", editable = "projects/nexus-fuzzer" },
@@ -131,11 +128,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/4e/29/f3be41a1cf502a283506f40f5d27203249d181f7a1a2abce1c6ce188035a/black-26.1.0-cp314-cp314-win_arm64.whl", hash = "sha256:66912475200b67ef5a0ab665011964bf924745103f51977a78b4fb92a9fc1bf0", size = 1245773, upload-time = "2026-01-18T04:59:54.457Z" },
     { url = "https://files.pythonhosted.org/packages/e4/3d/51bdb3ecbfadfaf825ec0c75e1de6077422b4afa2091c6c9ba34fbfc0c2d/black-26.1.0-py3-none-any.whl", hash = "sha256:1054e8e47ebd686e078c0bb0eaf31e6ce69c966058d122f2c0c950311f9f3ede", size = 204010, upload-time = "2026-01-18T04:50:09.978Z" },
 ]
-
-[[package]]
-name = "circil"
-version = "0.1.2"
-source = { editable = "libs/circil" }
 
 [[package]]
 name = "click"
@@ -343,7 +335,6 @@ version = "0.0.1"
 source = { editable = "projects/openvm-fuzzer" }
 dependencies = [
     { name = "beak-core" },
-    { name = "circil" },
     { name = "jinja2" },
     { name = "zkvm-fuzzer-utils" },
 ]
@@ -351,7 +342,6 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "beak-core", editable = "libs/beak-core" },
-    { name = "circil", editable = "libs/circil" },
     { name = "jinja2" },
     { name = "zkvm-fuzzer-utils", editable = "libs/zkvm-fuzzer-utils" },
 ]
@@ -624,14 +614,12 @@ name = "zkvm-fuzzer-utils"
 version = "0.0.1"
 source = { editable = "libs/zkvm-fuzzer-utils" }
 dependencies = [
-    { name = "circil" },
     { name = "psutil" },
     { name = "tabulate" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "circil", editable = "libs/circil" },
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "tabulate", specifier = ">=0.9.0" },
 ]

@@ -1,49 +1,66 @@
-# Beak-py: Differential Fuzzing for zkVMs
+# Beak-py: zkVM Guest Trace Collection
 
-Beak-py is a next-generation zkVM fuzzer designed to detect **Soundness** bugs by comparing zkVM execution results against a trusted RISC-V Oracle (Unicorn).
-
-## Core Architecture
-
-1. **beak-core**: Platform-independent logic.
-   - `generator.py`: Generates legal RV32IM assembly sequences directly (no CIRCIL IR).
-   - `oracle.py`: Obtains ground truth via `rustc` assembly compilation + `Unicorn` emulation.
-2. **Jinja2 Templating**: All Rust source code (Guest/Host) and `Cargo.toml` are decoupled into `.j2` templates.
-3. **UV Workspace**: Modern dependency management using `uv` for ultra-fast synchronization and consistent environments.
+Beak-py is a Python monorepo for **collecting zkVM guest program execution traces**, supporting multiple zkVMs. It is a part of beak project.
 
 ## Quick Start
 
 ### 1. Prerequisites
-- [uv](https://github.com/astral-sh/uv)
-- Rust toolchain with RISC-V target:
+
+- Install UV for Python environment management:
+  ```
+  # On macOS and Linux.
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+- Install Rust toolchain with RISC-V target:
   ```bash
   rustup target add riscv32im-unknown-none-elf
   rustup component add llvm-tools-preview
   ```
 
-### 2. Installation
-Initialize the workspace and install OpenVM fuzzer:
+### 2. Prepare local zkVM repos
+
+This repo vendors zkVM source repos as **git submodules**. To fetch/update all zkVM repos under `*-src/`:
+
 ```bash
-make install-openvm
+git submodule sync --recursive
+git submodule update --init --recursive
 ```
 
-### 3. Run Loop 1 (Natural Mode)
-Generate a random instruction sequence and compare Prover results with Oracle:
+### 3. Setup Python environment
+
+Initialize the workspace and install dependencies:
+
 ```bash
-make run-openvm-loop1
+make install
 ```
 
-## Loop 1 Mechanism
-- **Generate**: Produces 10-20 random RV32IM instructions.
-- **Precompute**: Oracle calculates the final register states.
-- **Render**: `zkvm_project.py` injects instructions and initial register values into Jinja templates.
-- **Diff Check**: Python script reconstructs `u32` values from Prover's byte-stream output and performs a field-by-field comparison.
+### 4. Manage zkVM Snapshot ( Using OpenVM as the example )
+
+- Install a snapshot
+
+```bash
+uv run openvm-fuzzer install --commit-or-branch bmk-regzero
+```
+
+## Core Architecture
+
+1. **`libs/beak-core`**: Platform-independent trace types + bucket matchers.
+2. **`libs/zkvm-fuzzer-utils`**: Shared utilities (git worktrees, record parsing, injection helpers).
+3. **`projects/*-fuzzer`**: Per-zkVM packages that can:
+   - materialize a local zkVM repo snapshot into `out/<zkvm>-<commit>/...`
+   - optionally apply instrumentation / fault-injection patches (where supported)
+4. **`scripts/*_bucket_workflow.py`**: End-to-end workflows that:
+   - generate a tiny guest program from an instruction file
+   - run the zkVM (offline)
+   - parse `<record>...</record>` JSON logs into `micro_op_records.json`
 
 ## Register Safety
+
 Beak-py uses a subset of safe RISC-V registers (`x5-x7`, `x10-x17`, `x28-x31`) to avoid conflicts with system-reserved registers like `sp` (stack pointer) and `gp` (global pointer).
 
 ## Bucket Workflow: Trace-Only Mode
 
-`beak-fuzz/scripts/openvm_bucket_workflow.py` and `beak-fuzz/scripts/sp1_bucket_workflow.py` now support `--trace-only`.
+`scripts/openvm_bucket_workflow.py` and `scripts/sp1_bucket_workflow.py` support `--trace-only`.
 
 - Purpose: run from an instruction file and export only micro-op trace artifacts for downstream tooling.
 - Behavior: skip bucket matching and do not write `bucket_hits.json`.
@@ -52,12 +69,12 @@ Beak-py uses a subset of safe RISC-V registers (`x5-x7`, `x10-x17`, `x28-x31`) t
 ### Commit Options
 
 - OpenVM (`--openvm-commit`):
-  - aliases: `regzero`, `audit-336`, `audit-f038`
+  - aliases: `bmk-regzero`, `bmk-336f`, `bmk-f038`
   - or pass a full commit hash directly
   - current pinned hashes:
-    - `regzero` -> `d7eab708f43487b2e7c00524ffd611f835e8e6b5`
-    - `audit-336` -> `336f1a475e5aa3513c4c5a266399f4128c119bba`
-    - `audit-f038` -> `f038f61d21db3aecd3029e1a23ba1ba0bb314800`
+    - `bmk-regzero` -> `d7eab708f43487b2e7c00524ffd611f835e8e6b5`
+    - `bmk-336f` -> `336f1a475e5aa3513c4c5a266399f4128c119bba`
+    - `bmk-f038` -> `f038f61d21db3aecd3029e1a23ba1ba0bb314800`
 
 - SP1 (`--sp1-commit`):
   - aliases: `s26`, `s27`, `s29`
@@ -70,15 +87,15 @@ Beak-py uses a subset of safe RISC-V registers (`x5-x7`, `x10-x17`, `x28-x31`) t
 ### OpenVM
 
 ```bash
-cd beak-fuzz
-python3 scripts/openvm_bucket_workflow.py \
-  --openvm-commit audit-f038 \
+uv run python scripts/openvm_bucket_workflow.py \
+  --openvm-commit bmk-f038 \
   --install-openvm \
   --instructions-file /tmp/openvm_insts.txt \
   --trace-only
 ```
 
 Output directory:
+
 - `out/openvm-<commit>/from-insts/micro_op_records.json`
 - `out/openvm-<commit>/from-insts/openvm_run.stdout.txt`
 - `out/openvm-<commit>/from-insts/openvm_run.stderr.txt`
@@ -86,8 +103,7 @@ Output directory:
 ### SP1
 
 ```bash
-cd /home/work/workflow/beak-workflow
-python3 beak-fuzz/scripts/sp1_bucket_workflow.py \
+uv run python scripts/sp1_bucket_workflow.py \
   --sp1-commit 7f643da16813af4c0fbaad4837cd7409386cf38c \
   --install-sp1 \
   --instructions-file /tmp/sp1_insts.txt \
@@ -95,6 +111,7 @@ python3 beak-fuzz/scripts/sp1_bucket_workflow.py \
 ```
 
 Output directory:
-- `beak-fuzz/out/sp1-<commit>/from-insts/micro_op_records.json`
-- `beak-fuzz/out/sp1-<commit>/from-insts/sp1_run.stdout.txt`
-- `beak-fuzz/out/sp1-<commit>/from-insts/sp1_run.stderr.txt`
+
+- `out/sp1-<commit>/from-insts/micro_op_records.json`
+- `out/sp1-<commit>/from-insts/sp1_run.stdout.txt`
+- `out/sp1-<commit>/from-insts/sp1_run.stderr.txt`

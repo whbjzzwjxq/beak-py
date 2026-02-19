@@ -8,7 +8,6 @@ services:
       dockerfile: projects/openvm-fuzzer/Dockerfile
     volumes:
       - ./openvm-src:/app/openvm-src
-    # Use entrypoint to generate a random seed per container
-    entrypoint: ["/bin/bash", "-c", "uv run openvm-fuzzer run --seed $$RANDOM --zkvm /app/openvm-src --out /app/output"]
+    entrypoint: ["uv", "run", "openvm-fuzzer", "install", "--zkvm-src", "/app/openvm-src", "--commit-or-branch", "bmk-f038", "--out-root", "/app/out"]
     deploy:
-      replicas: 4 # Number of parallel instances
+      replicas: 1 # Install-only; no parallel workers needed

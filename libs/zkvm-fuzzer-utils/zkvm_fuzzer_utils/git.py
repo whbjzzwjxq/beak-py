@@ -40,9 +40,9 @@ def __git_check_for_failure(status: ExecStatus, error_msg: str, exception_msg: s
 
 
 def is_git_repository(path: Path) -> bool:
-    git_entry = path / ".git"
-    # Worktrees store a `.git` *file* that points to the real gitdir.
-    return git_entry.is_dir() or git_entry.is_file()
+    # Worktrees use a `.git` *file* that points to the main repo's gitdir.
+    # Treat both as a git repository.
+    return (path / ".git").exists()
 
 
 # ---------------------------------------------------------------------------- #
@@ -108,31 +108,8 @@ def git_clean(repo_dir: Path):
 
 
 def git_checkout(repo_dir: Path, commit: str):
-    status = invoke_command(["git", "checkout", f"{commit}"], cwd=repo_dir)
-    if not status.is_failure():
-        return
-
-    # If this repo is a git worktree, a branch may already be checked out in a
-    # different worktree. In that case, fall back to a detached checkout of the
-    # corresponding remote branch.
-    #
-    # Example stderr:
-    #   fatal: 'main' is already checked out at '/path/to/other/worktree'
-    if "already checked out at" in (status.stderr or ""):
-        logger.info(
-            "Branch '%s' is already checked out in another worktree; falling back to detached checkout.",
-            commit,
-        )
-        detached_status = invoke_command(["git", "checkout", "--detach", f"origin/{commit}"], cwd=repo_dir)
-        __git_check_for_failure(
-            detached_status,
-            f"Unable to detached-checkout origin/{commit} for {repo_dir}",
-            f"Unable to checkout git commit / branch {commit} for {repo_dir.name}",
-        )
-        return
-
     __git_check_for_failure(
-        status,
+        invoke_command(["git", "checkout", f"{commit}"], cwd=repo_dir),
         f"Unable to checkout git commit / branch {commit} for {repo_dir}",
         f"Unable to checkout git commit / branch {commit} for {repo_dir.name}",
     )

@@ -9,9 +9,10 @@ import textwrap
 from pathlib import Path
 from typing import Any, Optional
 
+from sp1_fuzzer.zkvm_repository.snapshot import materialize_sp1_snapshot
+
 from workflow_common import (
     RunResult,
-    add_repo_to_syspath,
     build_trace_from_records as build_trace_from_records_common,
     ensure_writable_cargo_home,
     extract_record_json,
@@ -27,8 +28,8 @@ def _repo_root() -> Path:
     return repo_root()
 
 
-def _add_repo_to_syspath():
-    add_repo_to_syspath("sp1-fuzzer")
+def _out_dir() -> Path:
+    return _repo_root() / "out"
 
 
 def _extract_record_json(stdout: str) -> list[dict[str, Any]]:
@@ -97,13 +98,11 @@ def run_sp1_project(project_root: Path) -> RunResult:
 
 
 def build_trace_from_records(records: list[dict[str, Any]]):
-    _add_repo_to_syspath()
     return build_trace_from_records_common(records)
 
 
 def run_buckets(trace, *, sp1_commit: str):
-    _add_repo_to_syspath()
-    from beak_core.buckets import (  # type: ignore
+    from beak_core.buckets import (
         GateBoolDomainBucket,
         InactiveRowEffectsBucket,
         NextPcUnderconstrainedBucket,
@@ -168,43 +167,27 @@ def _write_text(path: Path, content: str) -> None:
 
 
 def install_and_inject_sp1(*, out_root: Path, commit_or_branch: str, install_sp1: bool) -> Path:
-    _add_repo_to_syspath()
-    from sp1_fuzzer.settings import resolve_sp1_commit  # type: ignore
-    from sp1_fuzzer.zkvm_repository.injection import sp1_fault_injection  # type: ignore
-
-    resolved = resolve_sp1_commit(commit_or_branch)
-    label = f"sp1-{resolved}"
-    dest = out_root / label / "sp1-src"
-    marker = dest / ".beak_fuzz_injected_ok"
-
     if not install_sp1:
+        # Legacy behavior was "require pre-installed snapshot". Keep that: we do not guess a base repo.
+        from sp1_fuzzer.settings import resolve_sp1_commit
+
+        resolved = resolve_sp1_commit(commit_or_branch)
+        dest = out_root / f"sp1-{resolved}" / "sp1-src"
         if not dest.exists():
             raise RuntimeError(f"missing installed SP1 snapshot at {dest}; re-run with --install-sp1")
         return dest
 
-    if install_sp1:
-        sp1_src = _repo_root() / "beak-fuzz" / "sp1-src"
-        if not sp1_src.exists():
-            raise RuntimeError(f"missing base checkout at {sp1_src}")
-        if dest.exists() and not (dest / ".git").exists():
-            shutil.rmtree(dest)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if not dest.exists():
-            subprocess.run(
-                ["git", "worktree", "add", "--detach", "--force", str(dest), resolved],
-                cwd=sp1_src,
-                check=True,
-                text=True,
-            )
-        if not marker.exists():
-            # Support "force reinjection" by deleting the marker: reset any previous patches
-            # (including prepends/replacements) before applying our injection again.
-            subprocess.run(["git", "reset", "--hard"], cwd=dest, check=True, text=True)
-            subprocess.run(["git", "clean", "-fdx"], cwd=dest, check=True, text=True)
-            sp1_fault_injection(dest, commit_or_branch=resolved)
-            marker.write_text("ok\n")
-        (dest / ".sp1_commit").write_text(resolved + "\n")
-    return dest
+    # New install flow: source repo is expected at repo_root/sp1-src (consistent with Makefile targets).
+    sp1_src = _repo_root() / "sp1-src"
+    if not sp1_src.exists():
+        raise RuntimeError(f"missing base checkout at {sp1_src}")
+
+    return materialize_sp1_snapshot(
+        sp1_src=sp1_src,
+        out_root=out_root,
+        commit_or_branch=commit_or_branch,
+        inject=True,
+    )
 
 
 def _parse_used_registers(inst) -> tuple[set[int], set[int]]:
@@ -229,8 +212,7 @@ def _parse_used_registers(inst) -> tuple[set[int], set[int]]:
 
 
 def generate_project_from_instructions(*, out_root: Path, sp1_path: Path, lines: list[str]) -> Path:
-    _add_repo_to_syspath()
-    from beak_core.rv32im import DEFAULT_DATA_BASE, Instruction  # type: ignore
+    from beak_core.rv32im import DEFAULT_DATA_BASE, Instruction
 
     insts = [Instruction.from_asm(s) for s in lines]
     regs: set[int] = set()
@@ -425,7 +407,7 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    out_base = _repo_root() / "beak-fuzz" / "out"
+    out_base = _out_dir()
     sp1_path = install_and_inject_sp1(out_root=out_base, commit_or_branch=args.sp1_commit, install_sp1=args.install_sp1)
     lines = _load_instructions(Path(args.instructions_file))
     project_root = generate_project_from_instructions(

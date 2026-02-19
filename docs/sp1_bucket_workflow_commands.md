@@ -1,6 +1,6 @@
 # SP1 Bucket Workflow（3 个版本）
 
-这份文档对应 `beak-fuzz/scripts/sp1_bucket_workflow.py`，实现与 OpenVM 类似的流程：
+这份文档对应 `scripts/sp1_bucket_workflow.py`，实现与 OpenVM 类似的流程：
 
 1. `--install-sp1`：将指定 commit 的 SP1 源码以 `git worktree` 安装到 `beak-fuzz/out/sp1-<commit>/sp1-src`，并注入 micro-op 输出逻辑（ChipRow + Interaction）。
 2. `--instructions-file`：输入一段 RV32IM 指令序列，自动生成一个最小 host/guest 项目并运行（core 证明，用于触发 trace/padding）。
@@ -29,9 +29,9 @@ EOF
 ## 2) 运行（Makefile 对应的 3 个 commit）
 
 ```bash
-python3 beak-fuzz/scripts/sp1_bucket_workflow.py --sp1-commit 7f643da16813af4c0fbaad4837cd7409386cf38c --install-sp1 --instructions-file /tmp/sp1_insts.txt
-python3 beak-fuzz/scripts/sp1_bucket_workflow.py --sp1-commit f3326e6d0bf78d6b4650ea1e26c501d72fb3c90b --install-sp1 --instructions-file /tmp/sp1_insts.txt
-python3 beak-fuzz/scripts/sp1_bucket_workflow.py --sp1-commit 811a3f2c03914088c7c9e1774266934a3f9f5359 --install-sp1 --instructions-file /tmp/sp1_insts.txt
+uv run python scripts/sp1_bucket_workflow.py --sp1-commit 7f643da16813af4c0fbaad4837cd7409386cf38c --install-sp1 --instructions-file /tmp/sp1_insts.txt
+uv run python scripts/sp1_bucket_workflow.py --sp1-commit f3326e6d0bf78d6b4650ea1e26c501d72fb3c90b --install-sp1 --instructions-file /tmp/sp1_insts.txt
+uv run python scripts/sp1_bucket_workflow.py --sp1-commit 811a3f2c03914088c7c9e1774266934a3f9f5359 --install-sp1 --instructions-file /tmp/sp1_insts.txt
 ```
 
 ## 3) 输出位置（每个版本各自目录）

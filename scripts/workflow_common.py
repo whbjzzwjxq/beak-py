@@ -17,14 +17,14 @@ class RunResult:
 
 
 def repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-
-
-def add_repo_to_syspath(project_subdir: str) -> None:
-    root = repo_root()
-    sys.path.insert(0, str(root / "beak-fuzz" / "libs" / "beak-core"))
-    sys.path.insert(0, str(root / "beak-fuzz" / "libs" / "zkvm-fuzzer-utils"))
-    sys.path.insert(0, str(root / "beak-fuzz" / "projects" / project_subdir))
+    # This repo has historically been nested under a larger mono-repo layout.
+    # Resolve the real repo root by walking up until we find a marker file.
+    here = Path(__file__).resolve()
+    for p in (here.parent, *here.parents):
+        if (p / "pyproject.toml").exists() or (p / ".git").exists():
+            return p
+    # Fallback: scripts/ is directly under the repo root.
+    return here.parents[1]
 
 
 def extract_record_json(stdout: str) -> list[dict[str, Any]]:

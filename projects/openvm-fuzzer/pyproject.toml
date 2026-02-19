@@ -11,7 +11,6 @@ requires-python = ">= 3.10"
 authors = []
 readme = "README.md"
 dependencies = [
-  "circil",
   "zkvm-fuzzer-utils",
   "beak-core",
   "jinja2"

@@ -1,65 +1,62 @@
 #!/usr/bin/env python3
 
+import argparse
 import logging
-from random import Random
+from pathlib import Path
 
-from jolt_fuzzer.fuzzer import JoltBeakFuzzer
 from jolt_fuzzer.settings import JOLT_AVAILABLE_COMMITS_OR_BRANCHES
 from jolt_fuzzer.zkvm_repository.install import install_jolt
-from zkvm_fuzzer_utils.cli import FuzzerClient
+from zkvm_fuzzer_utils.worktree import materialize_worktree, reset_and_clean_repo
 
 logger = logging.getLogger("fuzzer")
 
 
-def _iter_supported_commits() -> list[str]:
-    return [c for c in JOLT_AVAILABLE_COMMITS_OR_BRANCHES if c != "all"]
+def _build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="jolt-fuzzer", description="Jolt installer (install-only).")
+    sp = ap.add_subparsers(dest="command", required=True)
+
+    install = sp.add_parser("install", help="Materialize a snapshot into out/.")
+    install.add_argument("--zkvm-src", type=Path, required=True, help="Path to a local Jolt git repo (source).")
+    install.add_argument(
+        "--commit-or-branch",
+        type=str,
+        required=True,
+        choices=JOLT_AVAILABLE_COMMITS_OR_BRANCHES,
+        help="Jolt commit/branch to install.",
+    )
+    install.add_argument("--out-root", type=Path, default=Path("out"), help="Output root (default: ./out).")
+    install.add_argument(
+        "--inject",
+        action="store_true",
+        help="Not supported for Jolt in this repo (kept for flag parity).",
+    )
+    return ap
 
 
-class JoltFuzzerClient(FuzzerClient):
-    def run(self):
-        assert self.out_dir, "no output directory"
-        assert self.zkvm_dir, "no zkvm library"
+def _cmd_install(args: argparse.Namespace) -> int:
+    if args.commit_or_branch == "all":
+        raise RuntimeError("'all' is not a valid install target; pick a concrete commit")
+    if args.inject:
+        raise RuntimeError("inject is not supported for Jolt in this repo")
 
-        logger.info(f"=== Start {self.logger_prefix} Fuzzing Campaign ===")
-        logger.info(f" * seed: {self.seed}")
-        logger.info(f" * output: {self.out_dir}")
-        logger.info(f" * library: {self.zkvm_dir}")
-        logger.info(f" * commit: {self.commit_or_branch}")
-        logger.info("===")
+    dest = materialize_worktree(
+        zkvm_name="jolt",
+        zkvm_src_repo=args.zkvm_src,
+        out_root=args.out_root,
+        resolved_commit=args.commit_or_branch,
+    )
+    reset_and_clean_repo(dest)
+    install_jolt(dest, args.commit_or_branch)
 
-        commits = _iter_supported_commits() if self.commit_or_branch == "all" else [self.commit_or_branch]
-
-        for commit in commits:
-            install_jolt(self.zkvm_dir, commit)
-
-            fuzzer_out = self.out_dir / f"jolt-{commit[:7]}"
-            fuzzer_out.mkdir(parents=True, exist_ok=True)
-            fuzzer = JoltBeakFuzzer(fuzzer_out, self.zkvm_dir, Random(self.seed), commit)
-
-            if self.commit_or_branch == "all" or self.timeout is None or self.timeout <= 0:
-                fuzzer.run()
-            else:
-                fuzzer.enable_timeout(self.timeout)
-                fuzzer.loop()
-
-        logger.info(f"=== End {self.logger_prefix} Fuzzing Campaign ===")
-
-    def install(self):
-        assert self.zkvm_dir, "no zkvm library"
-        commits = _iter_supported_commits() if self.commit_or_branch == "all" else [self.commit_or_branch]
-        for commit in commits:
-            install_jolt(self.zkvm_dir, commit)
-
-    def check(self):
-        raise NotImplementedError("No bugs to check yet!")
-
-    def generate(self):
-        raise NotImplementedError("Use 'run' for loop1 generation+execution.")
+    print(dest)
+    return 0
 
 
 def app():
-    cli = JoltFuzzerClient("JOLT", "Jolt", JOLT_AVAILABLE_COMMITS_OR_BRANCHES)
-    cli.start()
+    args = _build_parser().parse_args()
+    if args.command == "install":
+        raise SystemExit(_cmd_install(args))
+    raise SystemExit(2)
 
 
 if __name__ == "__main__":

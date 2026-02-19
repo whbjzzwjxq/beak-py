@@ -32,7 +32,6 @@ WORKDIR /app
 # Copy dependency files first to leverage Docker cache
 COPY pyproject.toml .
 COPY libs/beak-core/pyproject.toml libs/beak-core/
-COPY libs/circil/pyproject.toml libs/circil/
 COPY libs/zkvm-fuzzer-utils/pyproject.toml libs/zkvm-fuzzer-utils/
 COPY projects/openvm-fuzzer/pyproject.toml projects/openvm-fuzzer/
 
@@ -45,4 +44,4 @@ RUN uv sync
 
 # Standard Entrypoint
 ENTRYPOINT ["uv", "run", "openvm-fuzzer"]
-CMD ["run", "--zkvm", "./openvm-src", "--out", "./output"]
+CMD ["install", "--zkvm-src", "./openvm-src", "--commit-or-branch", "bmk-f038", "--out-root", "./out"]

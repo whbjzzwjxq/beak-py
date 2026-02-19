@@ -9,9 +9,10 @@ import textwrap
 from pathlib import Path
 from typing import Any, Optional
 
+from openvm_fuzzer.patches.snapshot import materialize_openvm_snapshot
+
 from workflow_common import (
     RunResult,
-    add_repo_to_syspath,
     build_trace_from_records as build_trace_from_records_common,
     ensure_writable_cargo_home,
     extract_record_json,
@@ -27,8 +28,8 @@ def _repo_root() -> Path:
     return repo_root()
 
 
-def _add_repo_to_syspath():
-    add_repo_to_syspath("openvm-fuzzer")
+def _out_dir() -> Path:
+    return _repo_root() / "out"
 
 
 def _extract_record_json(stdout: str) -> list[dict[str, Any]]:
@@ -74,24 +75,22 @@ def run_openvm_project(project_root: Path) -> RunResult:
 
 
 def build_trace_from_records(records: list[dict[str, Any]]):
-    _add_repo_to_syspath()
     return build_trace_from_records_common(records)
 
 
 def run_buckets(trace, *, openvm_commit: str):
-    _add_repo_to_syspath()
-    from beak_core.buckets import (  # type: ignore
+    from beak_core.buckets import (
         GateBoolDomainBucket,
         InactiveRowEffectsBucket,
         NextPcUnderconstrainedBucket,
     )
-    from openvm_fuzzer.settings import OPENVM_REGZERO_COMMIT  # type: ignore
+    from openvm_fuzzer.settings import OPENVM_BENCHMARK_REGZERO_COMMIT
 
     # OpenVM control-flow candidates:
     # - audit-* snapshots emit adapter/core ChipRows, so we can match specific adapter chips.
     # - regzero snapshot now emits adapter ChipRows from rv32im `fill_trace_row` instrumentation,
     #   so we can match concrete adapter chips there as well.
-    if openvm_commit == OPENVM_REGZERO_COMMIT:
+    if openvm_commit == OPENVM_BENCHMARK_REGZERO_COMMIT:
         nextpc_buckets = [
             NextPcUnderconstrainedBucket(
                 instruction_label="openvm.Rv32JalrAdapterAir",
@@ -118,7 +117,10 @@ def run_buckets(trace, *, openvm_commit: str):
             ),
         ]
 
-    buckets = nextpc_buckets + [GateBoolDomainBucket(), InactiveRowEffectsBucket(activation_gate="is_real")]
+    buckets = nextpc_buckets + [
+        GateBoolDomainBucket(),
+        InactiveRowEffectsBucket(activation_gate="is_real"),
+    ]
 
     hits: list[dict[str, Any]] = []
     for op_idx in range(len(trace.op_spans or [])):
@@ -150,43 +152,12 @@ def _write_text(path: Path, content: str) -> None:
 
 
 def install_and_inject_openvm(*, openvm_src: Path, out_dir: Path, commit_or_branch: str) -> Path:
-    """
-    Local "install" flow (no network): materialize an OpenVM checkout for `commit_or_branch`
-    under out_dir, then run injection once.
-
-    If `openvm_src` is a git repo, use `git worktree` (fast, no duplication). Otherwise fall back
-    to `copytree`.
-    """
-    _add_repo_to_syspath()
-    from openvm_fuzzer.zkvm_repository.injection import openvm_fault_injection  # type: ignore
-    from openvm_fuzzer.settings import resolve_openvm_commit  # type: ignore
-    from openvm_fuzzer.zkvm_repository.install import _rewrite_private_stark_backend  # type: ignore
-
-    resolved = resolve_openvm_commit(commit_or_branch)
-    dest = out_dir / f"openvm-{resolved}" / "openvm-src"
-    marker = dest / ".beak_fuzz_injected_ok"
-    if not dest.exists():
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if (openvm_src / ".git").exists():
-            subprocess.run(
-                ["git", "worktree", "add", "--detach", "--force", str(dest), resolved],
-                cwd=openvm_src,
-                check=True,
-                text=True,
-            )
-        else:
-            shutil.copytree(openvm_src, dest, symlinks=True)
-    # Always rewrite private deps (offline builds cannot fetch private repos).
-    _rewrite_private_stark_backend(dest, resolved)
-    if not marker.exists():
-        # Support "force reinjection" by deleting the marker: reset any previous patches
-        # before applying our injection again.
-        subprocess.run(["git", "reset", "--hard"], cwd=dest, check=True, text=True)
-        subprocess.run(["git", "clean", "-fdx"], cwd=dest, check=True, text=True)
-        openvm_fault_injection(dest, commit_or_branch=resolved)
-        marker.write_text("ok\n")
-    (dest / ".openvm_commit").write_text(resolved + "\n")
-    return dest
+    return materialize_openvm_snapshot(
+        openvm_src=openvm_src,
+        out_root=out_dir,
+        commit_or_branch=commit_or_branch,
+        inject=True,
+    )
 
 
 def _parse_used_registers(inst) -> tuple[set[int], set[int]]:
@@ -214,13 +185,14 @@ def _parse_used_registers(inst) -> tuple[set[int], set[int]]:
     return regs, base_regs
 
 
-def generate_project_from_instructions(*, out_root: Path, openvm_path: Path, lines: list[str]) -> Path:
-    _add_repo_to_syspath()
-    from beak_core.rv32im import DEFAULT_DATA_BASE, Instruction  # type: ignore
-    from openvm_fuzzer.settings import (  # type: ignore
-        OPENVM_AUDIT_336_COMMIT,
-        OPENVM_AUDIT_F038_COMMIT,
-        OPENVM_REGZERO_COMMIT,
+def generate_project_from_instructions(
+    *, out_root: Path, openvm_path: Path, lines: list[str]
+) -> Path:
+    from beak_core.rv32im import DEFAULT_DATA_BASE, Instruction
+    from openvm_fuzzer.settings import (
+        OPENVM_BENCHMARK_336F_COMMIT,
+        OPENVM_BENCHMARK_F038_COMMIT,
+        OPENVM_BENCHMARK_REGZERO_COMMIT,
     )
 
     insts = [Instruction.from_asm(s) for s in lines]
@@ -298,8 +270,8 @@ def generate_project_from_instructions(*, out_root: Path, openvm_path: Path, lin
         commit = (openvm_path / ".openvm_commit").read_text().strip()
     else:
         commit = ""
-    use_generic_sdk = commit == OPENVM_REGZERO_COMMIT
-    use_legacy_sdk_unit = commit in {OPENVM_AUDIT_336_COMMIT, OPENVM_AUDIT_F038_COMMIT}
+    use_generic_sdk = commit == OPENVM_BENCHMARK_REGZERO_COMMIT
+    use_legacy_sdk_unit = commit in {OPENVM_BENCHMARK_336F_COMMIT, OPENVM_BENCHMARK_F038_COMMIT}
 
     if use_generic_sdk:
         host_main = textwrap.dedent(
@@ -470,7 +442,7 @@ def generate_project_from_instructions(*, out_root: Path, openvm_path: Path, lin
 
     asm_lines = "\n".join(f'            "{s}",' for s in lines)
     # Guest reads initial regs from stdin (excluding x0), runs asm, then reveals a sentinel.
-    reveal_fn = "reveal_u32" if commit == OPENVM_REGZERO_COMMIT else "reveal"
+    reveal_fn = "reveal_u32" if commit == OPENVM_BENCHMARK_REGZERO_COMMIT else "reveal"
     guest_main_lines: list[str] = [
         "#![allow(unused_unsafe)]",
         "#![allow(arithmetic_overflow)]",
@@ -518,25 +490,25 @@ def main() -> int:
     ap.add_argument(
         "--openvm-path",
         type=Path,
-        default=_repo_root() / "beak-fuzz" / "out" / "openvm-repo",
+        default=_repo_root() / "openvm-src",
         help="Path to an OpenVM git repo or checkout (used as the source for install+inject).",
     )
     ap.add_argument(
         "--openvm-commit",
         type=str,
-        default="audit-f038",
-        help="OpenVM commit or alias (regzero/audit-336/audit-f038).",
+        default="bmk-f038",
+        help="OpenVM commit or alias (bmk-regzero/bmk-336f/bmk-f038).",
     )
     ap.add_argument(
         "--install-openvm",
         action="store_true",
-        help="Local install+inject flow: copy --openvm-path into beak-fuzz/out and inject instrumentation there.",
+        help="Local install+inject flow: copy --openvm-path into out/ and inject instrumentation there.",
     )
     ap.add_argument(
         "--project-root",
         type=Path,
         default=None,
-        help="OpenVM project root containing `host/` and `guest/` (defaults under beak-fuzz/out/openvm-<commit>/).",
+        help="OpenVM project root containing `host/` and `guest/` (defaults under out/openvm-<commit>/).",
     )
     ap.add_argument(
         "--instructions-file",
@@ -558,37 +530,43 @@ def main() -> int:
         ),
     )
     args = ap.parse_args()
-    _add_repo_to_syspath()
-    from openvm_fuzzer.settings import resolve_openvm_commit  # type: ignore
+    from openvm_fuzzer.settings import resolve_openvm_commit
 
     commit = resolve_openvm_commit(args.openvm_commit)
 
     openvm_path = args.openvm_path
     if args.install_openvm:
-        out_dir = _repo_root() / "beak-fuzz" / "out"
+        out_dir = _out_dir()
         openvm_path = install_and_inject_openvm(
             openvm_src=openvm_path, out_dir=out_dir, commit_or_branch=commit
         )
     elif args.instructions_file is not None:
         # Prefer an already-installed snapshot when generating an instruction-driven project.
-        installed = _repo_root() / "beak-fuzz" / "out" / f"openvm-{commit}" / "openvm-src"
+        installed = _out_dir() / f"openvm-{commit}" / "openvm-src"
         if installed.exists():
             openvm_path = installed
 
     if args.project_root is None:
-        project_root = _repo_root() / "beak-fuzz" / "out" / f"openvm-{commit}" / "microops-fixed-elf"
+        project_root = _out_dir() / f"openvm-{commit}" / "microops-fixed-elf"
     else:
         project_root = args.project_root
     if args.instructions_file is not None:
-        out_root = _repo_root() / "beak-fuzz" / "out" / f"openvm-{commit}" / "from-insts"
+        out_root = _out_dir() / f"openvm-{commit}" / "from-insts"
         project_root = generate_project_from_instructions(
-            out_root=out_root, openvm_path=openvm_path, lines=_load_instructions(args.instructions_file)
+            out_root=out_root,
+            openvm_path=openvm_path,
+            lines=_load_instructions(args.instructions_file),
         )
 
     run = run_openvm_project(project_root)
     if run.returncode != 0:
         if not args.no_write_artifacts:
-            write_run_artifacts(project_root=project_root, run=run, records=[], hits=[] if not args.trace_only else None)
+            write_run_artifacts(
+                project_root=project_root,
+                run=run,
+                records=[],
+                hits=[] if not args.trace_only else None,
+            )
         print(f"project_root={project_root}")
         print(f"exit={run.returncode}")
         print("stderr tail:")
@@ -599,7 +577,12 @@ def main() -> int:
     records = _extract_record_json(run.stdout)
     if not records:
         if not args.no_write_artifacts:
-            write_run_artifacts(project_root=project_root, run=run, records=[], hits=[] if not args.trace_only else None)
+            write_run_artifacts(
+                project_root=project_root,
+                run=run,
+                records=[],
+                hits=[] if not args.trace_only else None,
+            )
         raise RuntimeError(
             "no <record> json objects found in stdout. "
             f"project_root={project_root} (see openvm_run.stdout.txt / openvm_run.stderr.txt)"

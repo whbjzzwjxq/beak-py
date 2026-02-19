@@ -1,71 +1,66 @@
 #!/usr/bin/env python3
 
+import argparse
 import logging
-from random import Random
+from pathlib import Path
 
-from nexus_fuzzer.fuzzer import NexusBeakFuzzer
 from nexus_fuzzer.settings import (
     NEXUS_AVAILABLE_COMMITS_OR_BRANCHES,
-    iter_nexus_snapshots,
     resolve_nexus_commit,
 )
 from nexus_fuzzer.zkvm_repository.install import install_nexus
-from zkvm_fuzzer_utils.cli import FuzzerClient
+from zkvm_fuzzer_utils.worktree import materialize_worktree, reset_and_clean_repo
 
 logger = logging.getLogger("fuzzer")
 
 
-def _iter_supported_commits() -> list[str]:
-    return iter_nexus_snapshots()
+def _build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="nexus-fuzzer", description="Nexus installer (install-only).")
+    sp = ap.add_subparsers(dest="command", required=True)
+
+    install = sp.add_parser("install", help="Materialize a snapshot into out/.")
+    install.add_argument("--zkvm-src", type=Path, required=True, help="Path to a local Nexus git repo (source).")
+    install.add_argument(
+        "--commit-or-branch",
+        type=str,
+        required=True,
+        choices=NEXUS_AVAILABLE_COMMITS_OR_BRANCHES,
+        help="Nexus commit/alias to install.",
+    )
+    install.add_argument("--out-root", type=Path, default=Path("out"), help="Output root (default: ./out).")
+    install.add_argument(
+        "--inject",
+        action="store_true",
+        help="Not supported for Nexus in this repo (kept for flag parity).",
+    )
+    return ap
 
 
-class NexusFuzzerClient(FuzzerClient):
-    def run(self):
-        assert self.out_dir, "no output directory"
-        assert self.zkvm_dir, "no zkvm library"
+def _cmd_install(args: argparse.Namespace) -> int:
+    if args.commit_or_branch == "all":
+        raise RuntimeError("'all' is not a valid install target; pick a concrete commit")
+    if args.inject:
+        raise RuntimeError("inject is not supported for Nexus in this repo")
 
-        logger.info(f"=== Start {self.logger_prefix} Fuzzing Campaign ===")
-        logger.info(f" * seed: {self.seed}")
-        logger.info(f" * output: {self.out_dir}")
-        logger.info(f" * library: {self.zkvm_dir}")
-        logger.info(f" * commit: {self.commit_or_branch}")
-        logger.info("===")
+    resolved = resolve_nexus_commit(args.commit_or_branch)
+    dest = materialize_worktree(
+        zkvm_name="nexus",
+        zkvm_src_repo=args.zkvm_src,
+        out_root=args.out_root,
+        resolved_commit=resolved,
+    )
+    reset_and_clean_repo(dest)
+    install_nexus(dest, resolved)
 
-        commits = _iter_supported_commits() if self.commit_or_branch == "all" else [self.commit_or_branch]
-
-        for commit in commits:
-            commit = resolve_nexus_commit(commit)
-            install_nexus(self.zkvm_dir, commit)
-
-            fuzzer_out = self.out_dir / f"nexus-{commit[:7]}"
-            fuzzer_out.mkdir(parents=True, exist_ok=True)
-            fuzzer = NexusBeakFuzzer(fuzzer_out, self.zkvm_dir, Random(self.seed), commit)
-
-            if self.commit_or_branch == "all" or self.timeout is None or self.timeout <= 0:
-                fuzzer.run()
-            else:
-                fuzzer.enable_timeout(self.timeout)
-                fuzzer.loop()
-
-        logger.info(f"=== End {self.logger_prefix} Fuzzing Campaign ===")
-
-    def install(self):
-        assert self.zkvm_dir, "no zkvm library"
-        commits = _iter_supported_commits() if self.commit_or_branch == "all" else [self.commit_or_branch]
-        for commit in commits:
-            commit = resolve_nexus_commit(commit)
-            install_nexus(self.zkvm_dir, commit)
-
-    def check(self):
-        raise NotImplementedError("No bugs to check yet!")
-
-    def generate(self):
-        raise NotImplementedError("Use 'run' for loop1 generation+execution.")
+    print(dest)
+    return 0
 
 
 def app():
-    cli = NexusFuzzerClient("NEXUS", "Nexus", NEXUS_AVAILABLE_COMMITS_OR_BRANCHES)
-    cli.start()
+    args = _build_parser().parse_args()
+    if args.command == "install":
+        raise SystemExit(_cmd_install(args))
+    raise SystemExit(2)
 
 
 if __name__ == "__main__":
