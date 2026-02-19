@@ -17,13 +17,13 @@ from openvm_fuzzer.patches import (
     rewrite_private_stark,
     create_fuzzer_utils_crate,
     add_fuzzer_utils_workspace,
+    rv32im_overwrite_cores,
     vm_replace_asserts,
     vm_add_serde_json,
     patch_integration_api_microops,
     patch_padding_samples,
     patch_segment_and_regzero_microops,
     rv32im_circuit_add_deps,
-    overwrite_rv32im_cores,
     rv32im_replace_asserts,
 )
 
@@ -88,10 +88,11 @@ def _install(args: argparse.Namespace) -> int:
         patch_padding_samples.apply,
         patch_segment_and_regzero_microops.apply,
         rv32im_circuit_add_deps.apply,
-        overwrite_rv32im_cores.apply,
+        rv32im_overwrite_cores.apply,
         rv32im_replace_asserts.apply,
     ]
     for apply_function in applied_functions:
+        logger.info(f"Applying {apply_function.__name__}...")
         apply_function(openvm_install_path=dest, commit_or_branch=resolved)
 
     # Finally, print the destination path.

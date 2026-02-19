@@ -31,7 +31,9 @@ def __git_check_for_failure(status: ExecStatus, error_msg: str, exception_msg: s
         logger.info("=== STDERR ===")
         logger.info(status.stderr)
         logger.info("==============")
-        raise GitException(exception_msg)
+        # Include full command output in the exception so it is visible even when
+        # logger output is not surfaced to the caller (common in CLI wrappers).
+        raise GitException(f"{exception_msg}\n{status}")
 
 
 # ---------------------------------------------------------------------------- #
@@ -97,11 +99,19 @@ def git_reset_hard(repo_dir: Path):
 
 
 def git_clean(repo_dir: Path):
-    __git_check_for_failure(
-        invoke_command(["git", "clean", "-fdx"], cwd=repo_dir),
-        f"Unable to clean files of git repository {repo_dir}",
-        f"Unable to clean files of git repository {repo_dir}",
-    )
+    # `git clean` refuses to delete nested git repositories unless `-f` is passed twice.
+    # This can happen after running tooling that vendors/clones repos inside the tree.
+    #
+    # IMPORTANT: We do NOT pass `-x` here, so entries ignored by `.gitignore`
+    # are preserved.
+    status = invoke_command(["git", "clean", "-fd"], cwd=repo_dir)
+    if status.is_failure():
+        status_retry = invoke_command(["git", "clean", "-ffd"], cwd=repo_dir)
+        __git_check_for_failure(
+            status_retry,
+            f"Unable to clean files of git repository {repo_dir}",
+            f"Unable to clean files of git repository {repo_dir}",
+        )
 
 
 # ---------------------------------------------------------------------------- #

@@ -22,3 +22,6 @@ openvm-fuzzer = "openvm_fuzzer.cli:app"
 [tool.setuptools.packages.find]
 include = ["openvm_fuzzer*"]
 exclude = []
+
+[tool.setuptools.package-data]
+openvm_fuzzer = ["templates/**/*", "patches/fuzzer_utils_crate/**/*"]

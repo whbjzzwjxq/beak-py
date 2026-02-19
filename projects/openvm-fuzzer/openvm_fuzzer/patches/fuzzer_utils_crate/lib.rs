@@ -1,4 +1,3 @@
-{% raw %}
 use std::sync::Mutex;
 use std::collections::HashMap;
 use lazy_static::lazy_static;
@@ -779,5 +778,4 @@ pub fn random_mutate_instruction<F: Field + PrimeField32>(instruction: &Instruct
 
     new_instruction
 }
-{% endraw %}
 

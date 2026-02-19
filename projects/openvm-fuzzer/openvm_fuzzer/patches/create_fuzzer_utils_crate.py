@@ -7,7 +7,7 @@ def apply(*, openvm_install_path: Path, commit_or_branch: str) -> None:
     _create_fuzzer_utils_crate(openvm_install_path=openvm_install_path)
 
 
-_TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates" / "fuzzer_utils_crate"
+_TEMPLATE_DIR = Path(__file__).resolve().parent / "fuzzer_utils_crate"
 
 
 def _read_template(filename: str) -> str:
