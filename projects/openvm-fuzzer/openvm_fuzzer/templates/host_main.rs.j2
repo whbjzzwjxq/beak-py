@@ -62,6 +62,8 @@ fn run(args: Args) {
     } else {
         fuzzer_utils::enable_assertions();
     }
+{% else %}
+    fuzzer_utils::disable_assertions();
 {% endif %}
 
     println!(

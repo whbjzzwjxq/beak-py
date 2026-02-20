@@ -20,6 +20,7 @@ from openvm_fuzzer.patches import (
     create_fuzzer_utils_crate,
     add_fuzzer_utils_workspace,
     rv32im_overwrite_cores,
+    transpiler_remove_protection,
     vm_replace_asserts,
     vm_add_serde_json,
     patch_integration_api_microops,
@@ -125,6 +126,7 @@ def _install(args: argparse.Namespace) -> int:
         rewrite_private_stark.apply,
         create_fuzzer_utils_crate.apply,
         add_fuzzer_utils_workspace.apply,
+        transpiler_remove_protection.apply,
         vm_replace_asserts.apply,
         vm_add_serde_json.apply,
         patch_integration_api_microops.apply,
@@ -165,12 +167,7 @@ def _trace(args: argparse.Namespace) -> int:
     else:
         # Default: small illustrative program (assembly directly; avoids Instruction dependency)
         instructions_asm = [
-            "add a4, ra, t0",
-            "addi t2, t2, 1",
-            "li t0, 2",
-            "bne t2, t0, -16",
-            "li t2, 25",
-            "xor a0, a4, t2",
+            "add x0, x0, 0",
         ]
 
     initial_regs: dict[int, int] = {}
