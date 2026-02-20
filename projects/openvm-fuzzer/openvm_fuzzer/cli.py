@@ -94,6 +94,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Only generate the trace project; do not run cargo.",
     )
     trace.add_argument(
+        "--stdout",
+        type=Path,
+        default=None,
+        help="Redirect host stdout (cargo run output) to this file.",
+    )
+    trace.add_argument(
         "--profile",
         type=str,
         choices=["release", "debug"],
@@ -179,6 +185,10 @@ def _trace(args: argparse.Namespace) -> int:
         v = int(v_str, 0)
         initial_regs[k] = v & 0xFFFFFFFF
 
+    # Reserve x30 as a scratch register to capture x0 inside inline asm.
+    # This avoids introducing an extra Rust variable just to read x0.
+    initial_regs.setdefault(30, 0)
+
     # Lightweight safety check: every register referenced as xN in --asm must be
     # present in --reg (plus x0 which is always allowed).
     allowed_regs = set(initial_regs.keys()) | {0}
@@ -205,6 +215,10 @@ def _trace(args: argparse.Namespace) -> int:
         raise SystemExit(
             f"--asm references registers not provided via --reg: {missing_str}. "
             "Every register used in --asm must be listed via --reg xN=VALUE (x0 is implicit)."
+        )
+    if 30 in regs_in_asm:
+        raise SystemExit(
+            "--asm must not reference x30: it is reserved as a scratch register for capturing x0."
         )
     forbidden = {2: "sp", 3: "gp", 4: "tp", 8: "fp", 9: "s1"}
     bad = [k for k in initial_regs.keys() if k in forbidden]
@@ -246,11 +260,21 @@ def _trace(args: argparse.Namespace) -> int:
         "--",
         "--trace",
     ]
-    subprocess.run(
-        cargo_cmd,
-        check=True,
-        cwd=project_root,
-    )
+    stdout_f = None
+    try:
+        if args.stdout is not None:
+            stdout_path = args.stdout.expanduser().resolve()
+            stdout_path.parent.mkdir(parents=True, exist_ok=True)
+            stdout_f = open(stdout_path, "w", encoding="utf-8")
+        subprocess.run(
+            cargo_cmd,
+            check=True,
+            cwd=project_root,
+            stdout=stdout_f,
+        )
+    finally:
+        if stdout_f is not None:
+            stdout_f.close()
     return 0
 
 

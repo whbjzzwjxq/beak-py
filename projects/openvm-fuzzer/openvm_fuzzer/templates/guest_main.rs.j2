@@ -3,11 +3,9 @@
 #![allow(arithmetic_overflow)]
 #![no_main]
 
-{% if use_reveal_u32 %}
-use openvm::io::{read, reveal_u32};
-{% else %}
-use openvm::io::{read, reveal};
-{% endif %}
+extern crate alloc;
+
+use openvm::io::{read, reveal_u32, println};
 use core::arch::asm;
 
 openvm::entry!(main);
@@ -19,9 +17,6 @@ pub fn main() {
     let mut x{{ reg_idx }}: u32 = read();
     {% endfor %}
 
-    // Variable to capture final x0 value (to check if it's still 0)
-    let mut final_x0: u32 = 0;
-
     // 2. Execute random instruction sequence
     unsafe {
         asm!(
@@ -30,41 +25,22 @@ pub fn main() {
             "{{ inst }}",
             {% endfor %}
 
-            // Manually capture x0 into a temporary register that's mapped to final_x0
-            "mv {final_x0}, x0",
+            // Capture x0 into scratch register x30 (t5).
+            // (Using an actual register avoids introducing an extra Rust variable.)
+            "addi x30, x0, 0",
 
             // Bind to physical registers (excluding x0 from operands)
             {% for reg_idx in initial_regs.keys() if reg_idx != 0 %}
             inout("x{{ reg_idx }}") x{{ reg_idx }},
             {% endfor %}
-            
-            final_x0 = out(reg) final_x0,
-            
             options(nostack)
         );
     }
 
-    // 3. Reveal final results back to Host.
-    // NOTE: OpenVM's reveal_u32 writes to the `index`-th public output word (overwrites).
-    // We therefore write sequential indices so the host can read a structured output.
-    // Always include x0 (idx=0) so the host can validate it stayed zero.
-    {% if use_reveal_u32 %}
-    {% set ns = namespace(i=0) %}
-    reveal_u32(0, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
-    reveal_u32(final_x0, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
-    {% else %}
-    {% set ns = namespace(i=0) %}
-    reveal(0, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
-    reveal(final_x0, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
-    {% endif %}
-
-    {% for reg_idx in initial_regs.keys() if reg_idx != 0 %}
-    {% if use_reveal_u32 %}
-    reveal_u32({{ reg_idx }}, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
-    reveal_u32(x{{ reg_idx }}, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
-    {% else %}
-    reveal({{ reg_idx }}, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
-    reveal(x{{ reg_idx }}, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
-    {% endif %}
+    // 3. Reveal and print results.
+    // Publish captured x0 (held in x30) as public output word 0.
+    println(alloc::format!("x0={}", x30));
+    {% for reg_idx in initial_regs.keys() if reg_idx != 0 and reg_idx != 30 %}
+    println(alloc::format!("x{{ reg_idx }}={}", x{{ reg_idx }}));
     {% endfor %}
 }
