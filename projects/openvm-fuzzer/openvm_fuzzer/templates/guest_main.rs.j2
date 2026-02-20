@@ -44,23 +44,27 @@ pub fn main() {
         );
     }
 
-    // 3. Reveal final results back to Host using stream 0
+    // 3. Reveal final results back to Host.
+    // NOTE: OpenVM's reveal_u32 writes to the `index`-th public output word (overwrites).
+    // We therefore write sequential indices so the host can read a structured output.
     // Always include x0 (idx=0) so the host can validate it stayed zero.
     {% if use_reveal_u32 %}
-    reveal_u32(0, 0);
-    reveal_u32(final_x0, 0);
+    {% set ns = namespace(i=0) %}
+    reveal_u32(0, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
+    reveal_u32(final_x0, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
     {% else %}
-    reveal(0, 0);
-    reveal(final_x0, 0);
+    {% set ns = namespace(i=0) %}
+    reveal(0, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
+    reveal(final_x0, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
     {% endif %}
 
     {% for reg_idx in initial_regs.keys() if reg_idx != 0 %}
     {% if use_reveal_u32 %}
-    reveal_u32({{ reg_idx }}, 0);
-    reveal_u32(x{{ reg_idx }}, 0);
+    reveal_u32({{ reg_idx }}, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
+    reveal_u32(x{{ reg_idx }}, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
     {% else %}
-    reveal({{ reg_idx }}, 0);
-    reveal(x{{ reg_idx }}, 0);
+    reveal({{ reg_idx }}, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
+    reveal(x{{ reg_idx }}, {{ ns.i }}); {% set ns.i = ns.i + 1 %}
     {% endif %}
     {% endfor %}
 }

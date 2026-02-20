@@ -1,9 +1,7 @@
-import io
 import os
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
-from beak_core.rv32im import FuzzingInstance
 from openvm_fuzzer.settings import OPENVM_BENCHMARK_REGZERO_COMMIT
 from zkvm_fuzzer_utils.file import create_file
 from zkvm_fuzzer_utils.project import AbstractProjectGenerator
@@ -53,21 +51,22 @@ def get_openvm_stark_sdk_from_openvm_workspace_cargo_toml(zkvm_path: Path) -> st
 
 class CircuitProjectGenerator(AbstractProjectGenerator):
     commit_or_branch: str
-    instance: FuzzingInstance
+    instructions_asm: list[str]
+    initial_regs: dict[int, int]
 
     def __init__(
         self,
         root: Path,
         zkvm_path: Path,
-        instance: FuzzingInstance,
+        instructions_asm: list[str],
+        initial_regs: dict[int, int],
         fault_injection: bool,
-        trace_collection: bool,
         commit_or_branch: str,
     ):
         super().__init__(root, zkvm_path)
-        self.instance = instance
+        self.instructions_asm = instructions_asm
+        self.initial_regs = initial_regs
         self._fault_injection = fault_injection
-        self._trace_collection = trace_collection
         self.commit_or_branch = commit_or_branch
         self.template_env = Environment(
             loader=FileSystemLoader(Path(__file__).parent / "templates"),
@@ -78,14 +77,6 @@ class CircuitProjectGenerator(AbstractProjectGenerator):
     @property
     def is_fault_injection(self) -> bool:
         return self._fault_injection
-
-    @property
-    def is_trace_collection(self) -> bool:
-        return self._trace_collection
-
-    @property
-    def requires_fuzzer_utils(self) -> bool:
-        return self.is_fault_injection or self.is_trace_collection
 
     def render_template(self, template_name: str, **kwargs) -> str:
         template = self.template_env.get_template(template_name)
@@ -106,18 +97,15 @@ class CircuitProjectGenerator(AbstractProjectGenerator):
         zkvm_relpath = os.path.relpath(self.zkvm_path, self.root / "host")
         content = self.render_template(
             "host_cargo.toml.j2",
-            requires_fuzzer_utils=self.requires_fuzzer_utils,
             zkvm_path=zkvm_relpath,
         )
         create_file(self.root / "host" / "Cargo.toml", content)
 
     def create_host_main_rs(self):
         # Initial regs info for host to push into stdin
-        sanitized_regs = {k: (v & 0xFFFFFFFF) for k, v in self.instance.initial_regs.items()}
+        sanitized_regs = {k: (v & 0xFFFFFFFF) for k, v in self.initial_regs.items()}
         content = self.render_template(
             "host_main.rs.j2",
-            requires_fuzzer_utils=self.requires_fuzzer_utils,
-            is_trace_collection=self.is_trace_collection,
             is_fault_injection=self.is_fault_injection,
             initial_regs=sanitized_regs,
             use_generic_sdk=(self.commit_or_branch == OPENVM_BENCHMARK_REGZERO_COMMIT),
@@ -132,8 +120,8 @@ class CircuitProjectGenerator(AbstractProjectGenerator):
     def create_guest_main_rs(self):
         content = self.render_template(
             "guest_main.rs.j2",
-            instructions=[inst.asm for inst in self.instance.instructions],
-            initial_regs=self.instance.initial_regs,
+            instructions=self.instructions_asm,
+            initial_regs=self.initial_regs,
             use_reveal_u32=(self.commit_or_branch == OPENVM_BENCHMARK_REGZERO_COMMIT),
         )
         create_file(self.root / "guest" / "src" / "main.rs", content)

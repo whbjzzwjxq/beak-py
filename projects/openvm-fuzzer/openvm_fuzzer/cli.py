@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
 import argparse
+import re
 import subprocess
 from pathlib import Path
 
-from beak_core.rv32im import FuzzingInstance, Instruction
 from openvm_fuzzer.settings import (
     OPNEVM_BENCHMARK_REGZERO_ALIAS,
     OPENVM_AVAILABLE_COMMITS_OR_BRANCHES,
@@ -28,6 +28,7 @@ from openvm_fuzzer.patches import (
     rv32im_circuit_add_deps,
     rv32im_replace_asserts,
 )
+
 
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="openvm-fuzzer", description="OpenVM installer.")
@@ -69,21 +70,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Where to generate the trace project (default: <out-root>/trace-<commit>).",
     )
     trace.add_argument(
-        "--hex",
+        "--asm",
         type=str,
-        nargs="*",
+        nargs="+",
+        action="extend",
         default=[],
         help=(
-            "RV32IM instruction words as 32-bit hex (e.g. 00c58533). "
+            "RISC-V assembly instructions (strings) to embed directly into guest inline asm. "
             "If omitted, uses a tiny default program."
         ),
     )
     trace.add_argument(
         "--reg",
+        dest="reg",
         type=str,
         action="append",
         default=[],
-        help="Initial register value as IDX=VALUE (decimal or 0x..). Repeatable.",
+        help="Initial register value as IDX=VALUE or xIDX=VALUE (decimal or 0x..). Repeatable.",
     )
     trace.add_argument(
         "--no-run",
@@ -150,29 +153,76 @@ def _trace(args: argparse.Namespace) -> int:
     else:
         project_root = args.project_root.expanduser().resolve()
 
-    # Parse program
-    if args.hex:
-        instructions = [Instruction.from_hex(x) for x in args.hex]
+    instructions_asm: list[str]
+    if args.asm:
+        instructions_asm = args.asm
     else:
-        # Default: NOP; NOP; (ADDI x0,x0,0) is 0x00000013
-        instructions = [Instruction.from_hex("00000013"), Instruction.from_hex("00000013")]
+        # Default: small illustrative program (assembly directly; avoids Instruction dependency)
+        instructions_asm = [
+            "add a4, ra, t0",
+            "addi t2, t2, 1",
+            "li t0, 2",
+            "bne t2, t0, -16",
+            "li t2, 25",
+            "xor a0, a4, t2",
+        ]
 
     initial_regs: dict[int, int] = {}
     for item in args.reg:
         if "=" not in item:
-            raise SystemExit(f"invalid --reg (expected IDX=VALUE): {item}")
+            raise SystemExit(f"invalid --reg (expected IDX=VALUE or xIDX=VALUE): {item}")
         k_str, v_str = item.split("=", 1)
+        k_str = k_str.strip()
+        if k_str.lower().startswith("x"):
+            k_str = k_str[1:]
         k = int(k_str, 0)
         v = int(v_str, 0)
-        initial_regs[k] = v
+        initial_regs[k] = v & 0xFFFFFFFF
 
-    instance = FuzzingInstance(instructions=instructions, initial_regs=initial_regs)
+    # Lightweight safety check: every register referenced as xN in --asm must be
+    # present in --reg (plus x0 which is always allowed).
+    allowed_regs = set(initial_regs.keys()) | {0}
+    regs_in_asm: set[int] = set()
+    # Also disallow ABI register names to avoid bypassing the check.
+    abi_reg_re = re.compile(
+        r"\b(ra|sp|gp|tp|fp|a[0-7]|t[0-6]|s(?:[0-9]|1[01]))\b", flags=re.IGNORECASE
+    )
+    x_reg_re = re.compile(r"\bx(\d+)\b", flags=re.IGNORECASE)
+    for inst in instructions_asm:
+        if abi_reg_re.search(inst):
+            raise SystemExit(
+                f"invalid --asm instruction (use xN names only): {inst!r}. "
+                "Every register must be explicitly listed via --reg xN=VALUE (x0 is implicit)."
+            )
+        for m in x_reg_re.finditer(inst):
+            idx = int(m.group(1), 10)
+            if not (0 <= idx <= 31):
+                raise SystemExit(f"invalid register in --asm (expected x0..x31): x{idx}")
+            regs_in_asm.add(idx)
+    missing = sorted(regs_in_asm - allowed_regs)
+    if missing:
+        missing_str = ", ".join(f"x{i}" for i in missing)
+        raise SystemExit(
+            f"--asm references registers not provided via --reg: {missing_str}. "
+            "Every register used in --asm must be listed via --reg xN=VALUE (x0 is implicit)."
+        )
+    forbidden = {2: "sp", 3: "gp", 4: "tp", 8: "fp", 9: "s1"}
+    bad = [k for k in initial_regs.keys() if k in forbidden]
+    if bad:
+        bad_str = ", ".join(f"x{k}({forbidden[k]})" for k in sorted(bad))
+        raise SystemExit(
+            f"--reg contains forbidden inline-asm operand registers: {bad_str}. "
+            "Avoid using x2/x3/x4/x8/x9 in seeds."
+        )
+    if not initial_regs:
+        # Default initial regs (safe subset; can be overridden by passing --reg)
+        initial_regs = {}
     gen = CircuitProjectGenerator(
         root=project_root,
         zkvm_path=zkvm_src,
-        instance=instance,
+        instructions_asm=instructions_asm,
+        initial_regs=initial_regs,
         fault_injection=False,
-        trace_collection=True,
         commit_or_branch=resolved,
     )
     gen.create()

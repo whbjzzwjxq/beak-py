@@ -42,6 +42,26 @@ make install
 uv run openvm-fuzzer install --commit-or-branch bmk-regzero
 ```
 
+### 5. Run a seed
+
+- Run this seed
+
+```bash
+uv run openvm-fuzzer trace \
+  --asm "add x14, x1, x5" \
+  --asm "addi x7, x7, 1" \
+  --asm "li x5, 2" \
+  --asm "bne x7, x5, -16" \
+  --asm "li x7, 25" \
+  --asm "xor x10, x14, x7" \
+  --reg x6=28 \
+  --reg x7=0 \
+  --reg x1=15 \
+  --reg x5=11 \
+  --reg x10=0 \
+  --reg x14=0
+```
+
 ## Core Architecture
 
 1. **`libs/beak-core`**: Platform-independent trace types + bucket matchers.
